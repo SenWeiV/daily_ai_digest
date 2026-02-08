@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# Environment variables
+.env
+.env.local
+
+# Database
+*.db
+data/*.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Node
+node_modules/
+dist/
+.npm
+*.log
+npm-debug.log*
+
+# Build
+build/
+*.egg-info/
+
+# Temp files
+*.tmp
+*.temp
+/tmp/

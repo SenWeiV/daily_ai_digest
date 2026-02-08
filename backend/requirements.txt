@@ -1,0 +1,36 @@
+# Web Framework
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+python-multipart==0.0.9
+
+# Async Support
+aiosqlite==0.19.0
+aiofiles==23.2.1
+
+# Scheduler
+apscheduler==3.10.4
+
+# Google APIs
+google-generativeai==0.4.1
+google-api-python-client==2.118.0
+google-auth-oauthlib==1.2.0
+
+# GitHub API
+PyGithub==2.2.0
+
+# YouTube Transcript
+youtube-transcript-api==0.6.2
+
+# Email
+aiosmtplib==3.0.1
+
+# Environment & Config
+python-dotenv==1.0.1
+pydantic==2.6.1
+pydantic-settings==2.1.0
+
+# HTTP Client
+httpx==0.26.0
+
+# Utilities
+tenacity==8.2.3
