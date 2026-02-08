@@ -4,6 +4,7 @@ Gemini 分析引擎 - 使用 Gemini Pro 进行深度内容分析
 
 import json
 import logging
+import socket
 from typing import Optional, List, Dict, Any
 
 import google.generativeai as genai
@@ -23,6 +24,7 @@ class GeminiAnalyzer:
         self.model_name = "gemini-1.5-pro"
         self.model = None
         self._token_count = 0
+        self._network_available = None  # 缓存网络状态
         
         if self.api_key:
             genai.configure(api_key=self.api_key)
@@ -38,10 +40,31 @@ class GeminiAnalyzer:
         else:
             logger.warning("未配置 Gemini API Key，分析功能将不可用")
     
+    def _check_network(self) -> bool:
+        """快速检测 Gemini API 网络连通性"""
+        if self._network_available is not None:
+            return self._network_available
+        
+        try:
+            socket.setdefaulttimeout(5)
+            socket.create_connection(("generativelanguage.googleapis.com", 443), timeout=5)
+            self._network_available = True
+            logger.info("Gemini API 网络连通性检测通过")
+        except (socket.timeout, socket.error, OSError) as e:
+            self._network_available = False
+            logger.warning(f"Gemini API 网络不可用: {e}")
+        finally:
+            socket.setdefaulttimeout(None)
+        
+        return self._network_available
+    
     @property
     def is_available(self) -> bool:
-        """检查 Gemini 是否可用"""
-        return self.model is not None
+        """检查 Gemini 是否可用（包括网络连通性）"""
+        if self.model is None:
+            return False
+        # 检查网络连通性
+        return self._check_network()
     
     @property
     def token_count(self) -> int:

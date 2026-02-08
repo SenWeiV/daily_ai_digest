@@ -8,6 +8,7 @@ import re
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 
+import socket
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -28,18 +29,22 @@ logger = logging.getLogger(__name__)
 class YouTubeAgent:
     """YouTube 热门视频检索和分析 Agent"""
     
-    # AI相关搜索关键词
+    # AI/AGI/AI Agent 相关搜索关键词
     SEARCH_KEYWORDS = [
-        "AI agent tutorial",
-        "LLM agent",
-        "artificial intelligence news",
-        "ChatGPT tutorial",
-        "Claude AI",
-        "Gemini AI",
-        "machine learning 2024",
-        "AI breakthrough",
+        "AI agent 2025",
+        "LLM agent tutorial",
+        "AGI artificial general intelligence",
         "autonomous AI agent",
-        "large language model"
+        "multi-agent AI system",
+        "Claude AI news",
+        "GPT-4 GPT-5 news",
+        "Gemini AI update",
+        "AI coding agent",
+        "agentic AI workflow",
+        "AI reasoning breakthrough",
+        "OpenAI news",
+        "Anthropic Claude",
+        "AI automation agent"
     ]
     
     def __init__(self):
@@ -47,12 +52,32 @@ class YouTubeAgent:
         self.api_key = settings.youtube_api_key
         self.client = None
         self.top_n = settings.youtube_top_n
+        self._network_available = None  # 缓存网络状态
         
         if self.api_key:
             self.client = build("youtube", "v3", developerKey=self.api_key)
             logger.info("YouTube Agent 初始化完成")
         else:
             logger.warning("未配置 YouTube API Key，功能将不可用")
+    
+    def _check_network(self) -> bool:
+        """快速检测 Google API 网络连通性"""
+        if self._network_available is not None:
+            return self._network_available
+        
+        try:
+            # 使用短超时检测 Google API 连通性
+            socket.setdefaulttimeout(5)
+            socket.create_connection(("www.googleapis.com", 443), timeout=5)
+            self._network_available = True
+            logger.info("YouTube API 网络连通性检测通过")
+        except (socket.timeout, socket.error, OSError) as e:
+            self._network_available = False
+            logger.warning(f"YouTube API 网络不可用: {e}")
+        finally:
+            socket.setdefaulttimeout(None)
+        
+        return self._network_available
     
     @property
     def is_available(self) -> bool:
@@ -63,14 +88,17 @@ class YouTubeAgent:
         self,
         keywords: Optional[List[str]] = None,
         days_ago: int = 1,
-        max_results_per_keyword: int = 10
+        max_results_per_keyword: int = 15
     ) -> List[Dict[str, Any]]:
         """
-        搜索热门AI相关视频
+        搜索观看量增长最快的 AI 相关视频
+        
+        策略：搜索过去 N 天内发布的视频，按观看量排序
+        新视频 + 高观看量 = 观看量增长最快
         
         Args:
             keywords: 搜索关键词列表
-            days_ago: 搜索最近N天发布的视频
+            days_ago: 搜索最近N天发布的视频（默认1天=24小时）
             max_results_per_keyword: 每个关键词返回的最大结果数
         
         Returns:
@@ -78,6 +106,11 @@ class YouTubeAgent:
         """
         if not self.is_available:
             logger.error("YouTube 客户端未初始化")
+            return []
+        
+        # 快速检测网络，避免长时间超时
+        if not self._check_network():
+            logger.warning("YouTube API 网络不可用，跳过视频搜索")
             return []
         
         keywords = keywords or self.SEARCH_KEYWORDS
@@ -272,16 +305,18 @@ class YouTubeAgent:
         days_ago: int = 1
     ) -> List[YouTubeDigestItem]:
         """
-        获取Top N热门AI视频（完整流程）
+        获取观看量增长最快的 Top N AI 视频（完整流程）
+        
+        策略：搜索过去24小时内发布的视频，按观看量排序
         
         Args:
             keywords: 搜索关键词
-            days_ago: 搜索时间范围（天）
+            days_ago: 搜索时间范围（天），默认1天
         
         Returns:
             YouTubeDigestItem列表
         """
-        logger.info(f"开始获取YouTube Top{self.top_n}热门视频...")
+        logger.info(f"开始获取YouTube Top{self.top_n}（过去{days_ago}天内发布）热门视频...")
         
         # 1. 搜索热门视频
         videos = await self.search_trending_videos(keywords, days_ago)

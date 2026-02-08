@@ -43,21 +43,21 @@ class Settings(BaseSettings):
     github_top_n: int = Field(default=10, description="GitHub Top N 数量")
     youtube_top_n: int = Field(default=10, description="YouTube Top N 数量")
     
-    # 搜索关键词
+    # 搜索关键词 - 聚焦 AI Agent/AGI/LLM 领域
     ai_keywords: list[str] = Field(
         default=[
             "AI agent",
-            "LLM agent", 
+            "LLM agent",
+            "AGI",
             "autonomous agent",
-            "artificial intelligence",
-            "large language model",
-            "GPT",
-            "transformer",
-            "RAG",
-            "machine learning",
-            "deep learning"
+            "multi-agent system",
+            "agentic AI",
+            "AI coding assistant",
+            "reasoning AI",
+            "GPT-4 GPT-5",
+            "Claude Anthropic"
         ],
-        description="AI相关搜索关键词"
+        description="AI/AGI/AI Agent 相关搜索关键词"
     )
 
     class Config:

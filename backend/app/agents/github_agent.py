@@ -21,18 +21,22 @@ logger = logging.getLogger(__name__)
 class GitHubAgent:
     """GitHub 热门项目检索和分析 Agent"""
     
-    # AI相关搜索关键词
+    # AI/AGI/AI Agent 相关搜索关键词
     SEARCH_KEYWORDS = [
         "AI agent",
         "LLM agent",
         "autonomous agent",
+        "AGI artificial general intelligence",
         "large language model",
-        "GPT",
-        "transformer AI",
-        "RAG retrieval",
-        "AI assistant",
-        "machine learning",
-        "deep learning neural"
+        "GPT-4 GPT-5",
+        "Claude Anthropic",
+        "Gemini AI",
+        "RAG retrieval augmented",
+        "multi-agent system",
+        "AI coding assistant",
+        "AI workflow automation",
+        "reasoning AI",
+        "agentic AI"
     ]
     
     # 核心文件名模式（用于识别入口文件）
@@ -65,15 +69,18 @@ class GitHubAgent:
         self,
         keywords: Optional[List[str]] = None,
         days_ago: int = 1,
-        min_stars: int = 10
+        min_stars: int = 50
     ) -> List[Repository]:
         """
-        搜索热门AI相关仓库
+        搜索过去24小时内 star 增长最快的 AI 相关仓库
+        
+        策略：搜索最近 N 天内有更新（pushed）的项目，按 star 排序
+        活跃更新 + 高 star = 近期热门（star增长快的项目通常也在活跃更新）
         
         Args:
             keywords: 搜索关键词列表
-            days_ago: 搜索最近N天更新的项目
-            min_stars: 最小Star数过滤
+            days_ago: 搜索最近N天内有更新的项目（默认1天=24小时）
+            min_stars: 最小Star数过滤（默认50）
         
         Returns:
             Repository对象列表
@@ -90,17 +97,32 @@ class GitHubAgent:
         
         for keyword in keywords:
             try:
-                # 构建搜索查询
+                # 构建搜索查询：搜索最近N天内有更新的项目，按star排序
+                # 活跃更新 + 高star = 近期热门
                 query = f"{keyword} pushed:>={date_str} stars:>={min_stars}"
                 
                 # 异步执行搜索（GitHub API是同步的，放到线程池）
+                def search_repos(q):
+                    try:
+                        result = self.client.search_repositories(
+                            query=q,
+                            sort="stars",
+                            order="desc"
+                        )
+                        # 安全地获取前20个结果
+                        repos_list = []
+                        for i, repo in enumerate(result):
+                            if i >= 20:
+                                break
+                            repos_list.append(repo)
+                        return repos_list
+                    except Exception as e:
+                        logger.warning(f"搜索执行失败: {e}")
+                        return []
+                
                 repos = await asyncio.get_event_loop().run_in_executor(
                     None,
-                    lambda q=query: list(self.client.search_repositories(
-                        query=q,
-                        sort="stars",
-                        order="desc"
-                    )[:30])  # 每个关键词取前30
+                    lambda: search_repos(query)
                 )
                 
                 # 去重并合并
@@ -108,7 +130,7 @@ class GitHubAgent:
                     if repo.full_name not in all_repos:
                         all_repos[repo.full_name] = repo
                 
-                logger.info(f"关键词 '{keyword}' 找到 {len(repos)} 个仓库")
+                logger.info(f"关键词 '{keyword}' 找到 {len(repos)} 个新项目")
                 
                 # 避免触发GitHub API限流
                 await asyncio.sleep(0.5)
@@ -120,15 +142,15 @@ class GitHubAgent:
                 logger.error(f"搜索异常: {e}")
                 continue
         
-        # 按Star数排序
+        # 按Star数排序（新项目中star最高的 = 增长最快）
         sorted_repos = sorted(
             all_repos.values(),
             key=lambda r: r.stargazers_count,
             reverse=True
         )
         
-        logger.info(f"共找到 {len(sorted_repos)} 个去重后的仓库")
-        return sorted_repos[:self.top_n * 2]  # 返回多一些，后续还要过滤
+        logger.info(f"共找到 {len(sorted_repos)} 个去重后的活跃项目（最近{days_ago}天更新）")
+        return sorted_repos[:self.top_n * 2]
     
     async def fetch_repo_details(self, repo: Repository) -> Dict[str, Any]:
         """
