@@ -118,6 +118,30 @@ npm run dev
 
 打开浏览器访问 http://localhost:3000 即可看到数据看板。
 
+### 6. 一键启动/停止（推荐）
+
+在项目根目录执行：
+
+```bash
+bash ./start.sh
+```
+
+查看状态：
+
+```bash
+bash ./status.sh
+```
+
+停止服务：
+
+```bash
+bash ./stop.sh
+```
+
+日志文件位于：`data/runtime/backend.log`、`data/runtime/frontend.log`。
+
+> 定时邮件发送依赖后端调度器，`backend` 需要持续运行；`frontend` 仅用于查看和手动操作，不需要一直开着。
+
 ## 🔑 API密钥获取指南
 
 ### Gemini API Key
@@ -212,13 +236,27 @@ daily_ai_digest/
 | GET | `/api/status` | 获取系统状态 |
 | GET | `/api/logs` | 获取执行日志 |
 | POST | `/api/email/test` | 发送测试邮件 |
+| POST | `/api/youtube/analyze` | 分析单个 YouTube 视频（URL/ID） |
 
 完整API文档访问：http://localhost:8000/docs
+
+单视频分析示例：
+
+```bash
+curl -X POST "http://localhost:8000/api/youtube/analyze" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "video_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+  }'
+```
 
 ## ⚙️ 配置说明
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
+| `GEMINI_BASE_URL` | OpenAI兼容网关地址（可选） | 空 |
+| `GEMINI_MODEL` | Gemini 主模型 | gemini-1.5-pro |
+| `GEMINI_FALLBACK_MODELS` | Gemini 回退模型（逗号分隔） | gemini-1.5-flash |
 | `SCHEDULE_HOUR` | 每日执行小时 | 8 |
 | `SCHEDULE_MINUTE` | 每日执行分钟 | 0 |
 | `TIMEZONE` | 时区 | Asia/Shanghai |

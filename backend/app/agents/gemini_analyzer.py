@@ -5,9 +5,11 @@ Gemini 分析引擎 - 使用 Gemini Pro 进行深度内容分析
 import json
 import logging
 import socket
+from urllib.parse import urlparse
 from typing import Optional, List, Dict, Any
 
 import google.generativeai as genai
+import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from app.config import settings
@@ -21,24 +23,54 @@ class GeminiAnalyzer:
     def __init__(self):
         """初始化 Gemini 客户端"""
         self.api_key = settings.gemini_api_key
-        self.model_name = "gemini-1.5-pro"
-        self.model = None
+        self.base_url = settings.gemini_base_url.rstrip("/")
+        self.model_name = settings.gemini_model
+        self.model_names = self._build_model_list()
+        self.models: Dict[str, genai.GenerativeModel] = {}
+        self.active_model_name: Optional[str] = None
         self._token_count = 0
         self._network_available = None  # 缓存网络状态
+        self.use_openai_compatible = bool(self.base_url)
         
         if self.api_key:
-            genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel(
-                model_name=self.model_name,
-                generation_config={
+            if self.use_openai_compatible:
+                # OpenAI 兼容接口仅在请求时动态发送 model，不需要预构建客户端对象
+                for model_name in self.model_names:
+                    self.models[model_name] = None  # type: ignore[assignment]
+            else:
+                genai.configure(api_key=self.api_key)
+                generation_config = {
                     "temperature": 0.3,
                     "top_p": 0.8,
                     "max_output_tokens": 8192,
                 }
-            )
-            logger.info(f"Gemini 分析引擎初始化完成，模型: {self.model_name}")
+                for model_name in self.model_names:
+                    self.models[model_name] = genai.GenerativeModel(
+                        model_name=model_name,
+                        generation_config=generation_config
+                    )
+            self.active_model_name = self.model_names[0] if self.model_names else None
+            if self.use_openai_compatible:
+                logger.info(f"Gemini 分析引擎初始化完成（OpenAI兼容），模型链路: {', '.join(self.model_names)}")
+            else:
+                logger.info(f"Gemini 分析引擎初始化完成，模型链路: {', '.join(self.model_names)}")
         else:
             logger.warning("未配置 Gemini API Key，分析功能将不可用")
+
+    def _build_model_list(self) -> List[str]:
+        """构建模型优先级列表（主模型 + 回退模型）"""
+        raw_models = [settings.gemini_model]
+        if settings.gemini_fallback_models:
+            raw_models.extend(settings.gemini_fallback_models.split(","))
+
+        models: List[str] = []
+        seen = set()
+        for model in raw_models:
+            model_name = model.strip()
+            if model_name and model_name not in seen:
+                seen.add(model_name)
+                models.append(model_name)
+        return models
     
     def _check_network(self) -> bool:
         """快速检测 Gemini API 网络连通性"""
@@ -47,7 +79,15 @@ class GeminiAnalyzer:
         
         try:
             socket.setdefaulttimeout(5)
-            socket.create_connection(("generativelanguage.googleapis.com", 443), timeout=5)
+            if self.use_openai_compatible:
+                parsed = urlparse(self.base_url)
+                host = parsed.hostname
+                port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                if not host:
+                    raise OSError(f"无效 GEMINI_BASE_URL: {self.base_url}")
+                socket.create_connection((host, port), timeout=5)
+            else:
+                socket.create_connection(("generativelanguage.googleapis.com", 443), timeout=5)
             self._network_available = True
             logger.info("Gemini API 网络连通性检测通过")
         except (socket.timeout, socket.error, OSError) as e:
@@ -61,7 +101,7 @@ class GeminiAnalyzer:
     @property
     def is_available(self) -> bool:
         """检查 Gemini 是否可用（包括网络连通性）"""
-        if self.model is None:
+        if not self.models:
             return False
         # 检查网络连通性
         return self._check_network()
@@ -84,18 +124,80 @@ class GeminiAnalyzer:
     async def _generate_content(self, prompt: str) -> str:
         """调用 Gemini 生成内容（带重试机制）"""
         if not self.is_available:
-            raise RuntimeError("Gemini API 未配置")
+            raise RuntimeError("Gemini API 不可用（未配置或网络不可达）")
         
-        try:
-            response = await self.model.generate_content_async(prompt)
-            
-            # 更新 Token 计数（估算）
-            self._token_count += len(prompt) // 4 + len(response.text) // 4
-            
-            return response.text
-        except Exception as e:
-            logger.error(f"Gemini 生成内容失败: {e}")
-            raise
+        model_candidates = list(self.model_names)
+        if self.active_model_name in self.models:
+            model_candidates = [self.active_model_name] + [
+                name for name in self.model_names if name != self.active_model_name
+            ]
+
+        last_error = None
+        for model_name in model_candidates:
+            try:
+                if self.use_openai_compatible:
+                    response_text = await self._generate_with_openai_compatible(prompt, model_name)
+                else:
+                    model = self.models.get(model_name)
+                    if not model:
+                        continue
+                    response = await model.generate_content_async(prompt)
+                    response_text = response.text or ""
+
+                # 更新 Token 计数（估算）
+                self._token_count += len(prompt) // 4 + len(response_text) // 4
+                self.active_model_name = model_name
+                return response_text
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Gemini 模型调用失败 [{model_name}]: {e}")
+                continue
+
+        logger.error(f"Gemini 生成内容失败，所有模型均不可用: {last_error}")
+        raise RuntimeError(f"Gemini 生成内容失败: {last_error}")
+
+    async def _generate_with_openai_compatible(self, prompt: str, model_name: str) -> str:
+        """通过 OpenAI 兼容接口生成内容"""
+        parsed = urlparse(self.base_url)
+        base_path = parsed.path.rstrip("/")
+        if not base_path:
+            endpoint = f"{self.base_url}/v1/chat/completions"
+        else:
+            endpoint = f"{self.base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+            "top_p": 0.8,
+            "max_tokens": 8192,
+        }
+
+        async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
+            response = await client.post(endpoint, headers=headers, json=payload)
+            response.raise_for_status()
+            raw_text = response.text.strip()
+            if not raw_text:
+                raise RuntimeError("OpenAI兼容接口返回空响应")
+            try:
+                data = response.json()
+            except json.JSONDecodeError:
+                return raw_text
+
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    parts.append(item.get("text", ""))
+            content = "\n".join(parts)
+
+        if not isinstance(content, str):
+            content = str(content)
+        return content.strip()
     
     def _parse_json_response(self, text: str) -> Dict[str, Any]:
         """解析 JSON 格式的响应"""
@@ -181,10 +283,11 @@ README内容：
         try:
             response = await self._generate_content(prompt)
             result = self._parse_json_response(response)
+            raw_fallback = result.get("raw_response", "").strip()
             
             # 确保返回结构完整
             return {
-                "summary": result.get("summary", ""),
+                "summary": result.get("summary", "") or raw_fallback[:300],
                 "why_trending": result.get("why_trending", ""),
                 "key_innovations": result.get("key_innovations", []),
                 "practical_value": result.get("practical_value", ""),
@@ -259,10 +362,11 @@ README内容：
         try:
             response = await self._generate_content(prompt)
             result = self._parse_json_response(response)
+            raw_fallback = result.get("raw_response", "").strip()
             
             # 确保返回结构完整
             return {
-                "content_summary": result.get("content_summary", ""),
+                "content_summary": result.get("content_summary", "") or raw_fallback[:500],
                 "key_points": result.get("key_points", []),
                 "why_popular": result.get("why_popular", ""),
                 "practical_takeaways": result.get("practical_takeaways", ""),

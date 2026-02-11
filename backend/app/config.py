@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     
     # Gemini API
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
+    gemini_base_url: str = Field(default="", alias="GEMINI_BASE_URL")
+    gemini_model: str = Field(default="gemini-1.5-pro", alias="GEMINI_MODEL")
+    gemini_fallback_models: str = Field(default="gemini-1.5-flash", alias="GEMINI_FALLBACK_MODELS")
     
     # GitHub API
     github_token: str = Field(default="", alias="GITHUB_TOKEN")

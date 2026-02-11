@@ -4,7 +4,7 @@ Pydantic 数据模型定义
 
 from datetime import datetime, date
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # =====================
@@ -159,3 +159,15 @@ class TriggerResponse(BaseModel):
     message: str
     task_id: Optional[str] = None
     digest_date: Optional[date] = None
+
+
+class YouTubeAnalyzeRequest(BaseModel):
+    """YouTube 单视频分析请求"""
+    video_url: Optional[str] = Field(default=None, description="YouTube 视频 URL")
+    video_id: Optional[str] = Field(default=None, description="YouTube 视频 ID")
+
+    @model_validator(mode="after")
+    def validate_input(self):
+        if not self.video_url and not self.video_id:
+            raise ValueError("video_url 和 video_id 至少提供一个")
+        return self

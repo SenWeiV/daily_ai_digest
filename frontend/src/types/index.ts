@@ -128,6 +128,12 @@ export interface TriggerResponse {
   digest_date: string | null;
 }
 
+// YouTube 单视频分析请求
+export interface YouTubeAnalyzeRequest {
+  video_url?: string;
+  video_id?: string;
+}
+
 // 历史列表响应
 export interface HistoryResponse {
   items: DigestRecordBrief[];

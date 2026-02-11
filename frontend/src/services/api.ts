@@ -9,6 +9,8 @@ import type {
   AppConfig,
   TriggerRequest,
   TriggerResponse,
+  YouTubeAnalyzeRequest,
+  YouTubeDigestItem,
   HistoryResponse,
   LogsResponse,
   ApiResponse,
@@ -120,6 +122,17 @@ export const emailApi = {
     const response = await api.post<ApiResponse>('/email/test', null, {
       params: recipient ? { recipient } : undefined,
     });
+    return response.data;
+  },
+};
+
+/**
+ * YouTube 工具 API
+ */
+export const youtubeApi = {
+  // 分析单个视频（URL/ID）
+  analyze: async (request: YouTubeAnalyzeRequest): Promise<YouTubeDigestItem> => {
+    const response = await api.post<YouTubeDigestItem>('/youtube/analyze', request);
     return response.data;
   },
 };

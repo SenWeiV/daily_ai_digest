@@ -1,15 +1,17 @@
 import { useState, useEffect } from 'react'
-import { Save, Send, RefreshCw, CheckCircle, XCircle, AlertCircle } from 'lucide-react'
-import { configApi, emailApi, systemApi } from '../services/api'
-import type { AppConfig, SystemStatus, ExecutionLog } from '../types'
+import { Send, CheckCircle, XCircle, AlertCircle, Youtube } from 'lucide-react'
+import { configApi, emailApi, systemApi, youtubeApi } from '../services/api'
+import type { AppConfig, SystemStatus, ExecutionLog, YouTubeDigestItem } from '../types'
 
 function Settings() {
   const [config, setConfig] = useState<AppConfig | null>(null)
   const [status, setStatus] = useState<SystemStatus | null>(null)
   const [logs, setLogs] = useState<ExecutionLog[]>([])
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
   const [sendingTest, setSendingTest] = useState(false)
+  const [youtubeUrl, setYoutubeUrl] = useState('')
+  const [youtubeTesting, setYoutubeTesting] = useState(false)
+  const [youtubeResult, setYoutubeResult] = useState<YouTubeDigestItem | null>(null)
 
   // 加载数据
   useEffect(() => {
@@ -128,6 +130,62 @@ function Settings() {
           <p className="text-sm text-blue-700">
             ?? API 密钥需要在后端 <code className="bg-blue-100 px-1 rounded">.env</code> 文件中配置，请参考 <code className="bg-blue-100 px-1 rounded">.env.example</code> 文件。
           </p>
+        </div>
+      </div>
+
+      {/* YouTube 单视频测试 */}
+      <div className="bg-white rounded-xl p-6 shadow-sm">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">YouTube 单视频测试</h2>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              YouTube 视频链接
+            </label>
+            <input
+              type="text"
+              value={youtubeUrl}
+              onChange={(e) => setYoutubeUrl(e.target.value)}
+              placeholder="https://www.youtube.com/watch?v=..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+            />
+          </div>
+          <div>
+            <button
+              onClick={async () => {
+                if (!youtubeUrl.trim() || youtubeTesting) return
+                try {
+                  setYoutubeTesting(true)
+                  const data = await youtubeApi.analyze({ video_url: youtubeUrl.trim() })
+                  setYoutubeResult(data)
+                } catch (error) {
+                  console.error('YouTube 分析失败:', error)
+                  alert('YouTube 分析失败，请检查链接与 API 配置')
+                } finally {
+                  setYoutubeTesting(false)
+                }
+              }}
+              disabled={!youtubeUrl.trim() || youtubeTesting || !config?.youtube_configured || !config?.gemini_configured}
+              className="inline-flex items-center px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Youtube className={`w-4 h-4 mr-2 ${youtubeTesting ? 'animate-pulse' : ''}`} />
+              {youtubeTesting ? '分析中...' : '测试分析'}
+            </button>
+          </div>
+
+          {youtubeResult && (
+            <div className="mt-4 p-4 rounded-lg border border-gray-200 bg-gray-50 space-y-2">
+              <div className="text-sm text-gray-500">标题</div>
+              <div className="font-medium text-gray-900">{youtubeResult.title}</div>
+              <div className="text-sm text-gray-500 mt-2">总结</div>
+              <div className="text-sm text-gray-800">{youtubeResult.content_summary || '无'}</div>
+              <div className="text-sm text-gray-500 mt-2">关键要点</div>
+              <ul className="list-disc pl-5 text-sm text-gray-800">
+                {youtubeResult.key_points?.slice(0, 5).map((point, idx) => (
+                  <li key={idx}>{point}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
 

@@ -83,6 +83,58 @@ class YouTubeAgent:
     def is_available(self) -> bool:
         """检查 YouTube 客户端是否可用"""
         return self.client is not None
+
+    def extract_video_id(self, video_input: str) -> Optional[str]:
+        """
+        从 YouTube URL 或文本中提取视频ID
+        支持:
+        - https://www.youtube.com/watch?v=VIDEO_ID
+        - https://youtu.be/VIDEO_ID
+        - https://www.youtube.com/shorts/VIDEO_ID
+        - 直接传入 11 位视频ID
+        """
+        if not video_input:
+            return None
+
+        raw = video_input.strip()
+        if re.match(r"^[a-zA-Z0-9_-]{11}$", raw):
+            return raw
+
+        patterns = [
+            r"(?:v=)([a-zA-Z0-9_-]{11})",
+            r"(?:youtu\.be/)([a-zA-Z0-9_-]{11})",
+            r"(?:/shorts/)([a-zA-Z0-9_-]{11})",
+            r"(?:/embed/)([a-zA-Z0-9_-]{11})",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, raw)
+            if match:
+                return match.group(1)
+        return None
+
+    async def fetch_video_by_id(self, video_id: str) -> Optional[Dict[str, Any]]:
+        """按视频ID获取详情"""
+        if not self.is_available:
+            logger.error("YouTube 客户端未初始化")
+            return None
+
+        try:
+            response = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: self.client.videos().list(
+                    part="snippet,statistics,contentDetails",
+                    id=video_id,
+                    maxResults=1
+                ).execute()
+            )
+            items = response.get("items", [])
+            return items[0] if items else None
+        except HttpError as e:
+            logger.error(f"拉取视频详情失败 [{video_id}]: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"拉取视频详情异常 [{video_id}]: {e}")
+            return None
     
     async def search_trending_videos(
         self,
@@ -347,6 +399,31 @@ class YouTubeAgent:
         
         logger.info(f"YouTube Agent 完成，共获取 {len(results)} 个视频")
         return results[:self.top_n]
+
+    async def analyze_video_by_id(
+        self,
+        video_url: Optional[str] = None,
+        video_id: Optional[str] = None
+    ) -> YouTubeDigestItem:
+        """分析指定 YouTube 视频（URL/ID）"""
+        if not self.is_available:
+            raise RuntimeError("YouTube API 未配置")
+
+        if not self._check_network():
+            raise RuntimeError("YouTube API 网络不可达")
+
+        resolved_video_id = video_id or ""
+        if not resolved_video_id and video_url:
+            resolved_video_id = self.extract_video_id(video_url) or ""
+
+        if not resolved_video_id:
+            raise ValueError("无法解析 YouTube 视频ID，请传入有效的 video_url 或 video_id")
+
+        video_data = await self.fetch_video_by_id(resolved_video_id)
+        if not video_data:
+            raise ValueError(f"未找到视频，ID: {resolved_video_id}")
+
+        return await self.analyze_video(video_data)
 
 
 # 全局实例

@@ -14,6 +14,7 @@ from app.schemas import (
     StatusResponse,
     TriggerRequest,
     TriggerResponse,
+    YouTubeAnalyzeRequest,
     DigestRecord,
     DigestRecordBrief,
     ExecutionLog,
@@ -227,6 +228,34 @@ async def send_test_email(recipient: Optional[str] = None):
         return ApiResponse(success=True, message="测试邮件发送成功")
     else:
         raise HTTPException(status_code=500, detail="测试邮件发送失败")
+
+
+# =====================
+# YouTube 工具接口
+# =====================
+
+@router.post("/youtube/analyze")
+async def analyze_youtube_video(request: YouTubeAnalyzeRequest):
+    """分析指定YouTube视频（URL/ID）"""
+    if not youtube_agent.is_available:
+        raise HTTPException(status_code=400, detail="YouTube API 未配置")
+
+    if not gemini_analyzer.is_available:
+        raise HTTPException(status_code=400, detail="Gemini API 未配置或网络不可达")
+
+    try:
+        result = await youtube_agent.analyze_video_by_id(
+            video_url=request.video_url,
+            video_id=request.video_id
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error(f"YouTube 单视频分析失败: {e}")
+        raise HTTPException(status_code=500, detail="YouTube 视频分析失败")
 
 
 # =====================
