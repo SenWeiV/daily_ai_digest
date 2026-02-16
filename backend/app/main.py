@@ -107,10 +107,30 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+def _get_cors_origins() -> list[str]:
+    """获取 CORS 白名单
+
+    优先使用环境变量 CORS_ALLOW_ORIGINS（逗号分隔）。
+    未配置时给一个相对安全的默认值：本地开发 + GitHub Pages。
+    """
+    if settings.cors_allow_origins.strip():
+        return [
+            origin.strip()
+            for origin in settings.cors_allow_origins.split(",")
+            if origin.strip()
+        ]
+
+    return [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://senweiv.github.io",
+    ]
+
+
 # CORS 配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生产环境应该限制具体域名
+    allow_origins=_get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     # API配置
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8000, alias="API_PORT")
+
+    # CORS
+    # 逗号分隔，例如："https://senweiv.github.io,http://localhost:3000"
+    cors_allow_origins: str = Field(default="", alias="CORS_ALLOW_ORIGINS")
     
     # 搜索配置
     github_top_n: int = Field(default=10, description="GitHub Top N 数量")
