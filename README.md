@@ -56,6 +56,29 @@
 
 ## 🚀 快速开始
 
+## 🌐 线上部署（GitHub Pages + 云服务器）
+
+### 前端（GitHub Pages）
+
+- Pages 地址：`https://senweiv.github.io/daily_ai_digest/`
+- 本仓库已内置 GitHub Actions 工作流，会在 `frontend/**` 更新时自动构建并发布。
+
+#### 配置前端访问后端（必须）
+
+在仓库 `Settings → Secrets and variables → Actions → Variables` 新增：
+
+- `VITE_API_BASE_URL`：后端 API 根路径（包含 `/api`）
+  - 示例：`http://120.48.83.123:8000/api`
+
+设置变量后，重新跑一次 Actions（Re-run jobs）即可让前端构建时带上该变量。
+
+### 后端（云服务器）
+
+后端建议部署在云服务器并开放 8000 端口。
+
+- 健康检查：`http://<server-ip>:8000/health`
+- API 文档：`http://<server-ip>:8000/docs`
+
 ### 1. 克隆项目
 
 ```bash
@@ -225,17 +248,17 @@ daily_ai_digest/
 
 ## ?? API接口
 
-| 方法 | 路径 | 描述 |
-|------|------|------|
-| GET | `/api/digest/today` | 获取今日摘要 |
-| GET | `/api/digest/latest` | 获取最新摘要 |
-| GET | `/api/digest/history` | 获取历史摘要列表 |
-| GET | `/api/digest/{date}` | 获取指定日期摘要 |
-| POST | `/api/digest/trigger` | 手动触发生成 |
-| GET | `/api/config` | 获取配置 |
-| GET | `/api/status` | 获取系统状态 |
-| GET | `/api/logs` | 获取执行日志 |
-| POST | `/api/email/test` | 发送测试邮件 |
+| 方法 | 路径                   | 描述                            |
+| ---- | ---------------------- | ------------------------------- |
+| GET  | `/api/digest/today`    | 获取今日摘要                    |
+| GET  | `/api/digest/latest`   | 获取最新摘要                    |
+| GET  | `/api/digest/history`  | 获取历史摘要列表                |
+| GET  | `/api/digest/{date}`   | 获取指定日期摘要                |
+| POST | `/api/digest/trigger`  | 手动触发生成                    |
+| GET  | `/api/config`          | 获取配置                        |
+| GET  | `/api/status`          | 获取系统状态                    |
+| GET  | `/api/logs`            | 获取执行日志                    |
+| POST | `/api/email/test`      | 发送测试邮件                    |
 | POST | `/api/youtube/analyze` | 分析单个 YouTube 视频（URL/ID） |
 
 完整API文档访问：http://localhost:8000/docs
@@ -252,16 +275,16 @@ curl -X POST "http://localhost:8000/api/youtube/analyze" \
 
 ## ⚙️ 配置说明
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `GEMINI_BASE_URL` | OpenAI兼容网关地址（可选） | 空 |
-| `GEMINI_MODEL` | Gemini 主模型 | gemini-1.5-pro |
+| 配置项                   | 说明                        | 默认值           |
+| ------------------------ | --------------------------- | ---------------- |
+| `GEMINI_BASE_URL`        | OpenAI兼容网关地址（可选）  | 空               |
+| `GEMINI_MODEL`           | Gemini 主模型               | gemini-1.5-pro   |
 | `GEMINI_FALLBACK_MODELS` | Gemini 回退模型（逗号分隔） | gemini-1.5-flash |
-| `SCHEDULE_HOUR` | 每日执行小时 | 8 |
-| `SCHEDULE_MINUTE` | 每日执行分钟 | 0 |
-| `TIMEZONE` | 时区 | Asia/Shanghai |
-| `DEBUG` | 调试模式 | false |
-| `LOG_LEVEL` | 日志级别 | INFO |
+| `SCHEDULE_HOUR`          | 每日执行小时                | 8                |
+| `SCHEDULE_MINUTE`        | 每日执行分钟                | 0                |
+| `TIMEZONE`               | 时区                        | Asia/Shanghai    |
+| `DEBUG`                  | 调试模式                    | false            |
+| `LOG_LEVEL`              | 日志级别                    | INFO             |
 
 ## 📧 Gmail 限制说明
 
