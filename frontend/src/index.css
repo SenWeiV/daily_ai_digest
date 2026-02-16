@@ -2,13 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 自定义样式 */
+/*
+  Digest UI 统一为个人站风格：深色（neutral-950）+ 浅色文字（neutral-50）
+  参考：weisen_personal_website/src/app/globals.css
+*/
+html {
+  scroll-behavior: smooth;
+}
+
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  @apply antialiased bg-neutral-950 text-neutral-50;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Inter",
+    "Segoe UI",
+    Roboto,
+    Helvetica,
+    Arial,
+    "Apple Color Emoji",
+    "Segoe UI Emoji";
+}
+
+/* 自定义选中样式 */
+::selection {
+  @apply bg-neutral-700 text-white;
 }
 
 /* 滚动条样式 */
@@ -18,17 +37,17 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: #0a0a0a;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
+  background: #262626;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a8a8a8;
+  background: #404040;
 }
 
 /* 动画 */
@@ -60,4 +79,17 @@ body {
 /* 卡片悬停效果 */
 .card-hover {
   @apply transition-all duration-200 hover:shadow-lg hover:-translate-y-1;
+}
+
+/* 统一的“低对比边框”工具类（偏个人站风格） */
+.border-subtle {
+  @apply border border-neutral-800;
+}
+
+.surface {
+  @apply bg-neutral-900/50 border border-neutral-800;
+}
+
+.link-muted {
+  @apply text-neutral-500 hover:text-white transition-colors duration-300;
 }
