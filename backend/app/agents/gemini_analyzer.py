@@ -51,11 +51,11 @@ class GeminiAnalyzer:
                     )
             self.active_model_name = self.model_names[0] if self.model_names else None
             if self.use_openai_compatible:
-                logger.info(f"Gemini 分析引擎初始化完成（OpenAI兼容），模型链路: {', '.join(self.model_names)}")
+                logger.info(f"LLM 分析引擎初始化完成（OpenAI兼容接口: {self.base_url}），模型: {', '.join(self.model_names)}")
             else:
                 logger.info(f"Gemini 分析引擎初始化完成，模型链路: {', '.join(self.model_names)}")
         else:
-            logger.warning("未配置 Gemini API Key，分析功能将不可用")
+            logger.warning("未配置 LLM API Key，分析功能将不可用")
 
     def _build_model_list(self) -> List[str]:
         """构建模型优先级列表（主模型 + 回退模型）"""
@@ -73,29 +73,33 @@ class GeminiAnalyzer:
         return models
     
     def _check_network(self) -> bool:
-        """快速检测 Gemini API 网络连通性"""
+        """快速检测 API 网络连通性"""
         if self._network_available is not None:
             return self._network_available
-        
+
         try:
-            socket.setdefaulttimeout(5)
+            socket.setdefaulttimeout(10)
             if self.use_openai_compatible:
+                # OpenAI 兼容接口（如 Kimi、DeepSeek 等）
                 parsed = urlparse(self.base_url)
                 host = parsed.hostname
                 port = parsed.port or (443 if parsed.scheme == "https" else 80)
                 if not host:
-                    raise OSError(f"无效 GEMINI_BASE_URL: {self.base_url}")
-                socket.create_connection((host, port), timeout=5)
+                    raise OSError(f"无效 BASE_URL: {self.base_url}")
+                socket.create_connection((host, port), timeout=10)
+                self._network_available = True
+                logger.info(f"LLM API 网络连通性检测通过: {host}:{port}")
             else:
-                socket.create_connection(("generativelanguage.googleapis.com", 443), timeout=5)
-            self._network_available = True
-            logger.info("Gemini API 网络连通性检测通过")
+                # Google Gemini 原生接口
+                socket.create_connection(("generativelanguage.googleapis.com", 443), timeout=10)
+                self._network_available = True
+                logger.info("Gemini API 网络连通性检测通过")
         except (socket.timeout, socket.error, OSError) as e:
             self._network_available = False
-            logger.warning(f"Gemini API 网络不可用: {e}")
+            logger.warning(f"LLM API 网络不可用: {e}")
         finally:
             socket.setdefaulttimeout(None)
-        
+
         return self._network_available
     
     @property
@@ -160,10 +164,15 @@ class GeminiAnalyzer:
         """通过 OpenAI 兼容接口生成内容"""
         parsed = urlparse(self.base_url)
         base_path = parsed.path.rstrip("/")
-        if not base_path:
-            endpoint = f"{self.base_url}/v1/chat/completions"
+        # 支持 Kimi/DeepSeek/通义等 OpenAI 兼容接口
+        # 如果 base_url 已经包含 /v1，则直接添加 /chat/completions
+        # 否则添加 /v1/chat/completions
+        if base_path.endswith("/v1") or base_path.endswith("/v1/"):
+            endpoint = f"{self.base_url.rstrip('/')}/chat/completions"
+        elif base_path:
+            endpoint = f"{self.base_url.rstrip('/')}/chat/completions"
         else:
-            endpoint = f"{self.base_url}/chat/completions"
+            endpoint = f"{self.base_url.rstrip('/')}/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -171,8 +180,7 @@ class GeminiAnalyzer:
         payload = {
             "model": model_name,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3,
-            "top_p": 0.8,
+            "temperature": 1,  # Kimi API 只接受 temperature=1
             "max_tokens": 8192,
         }
 

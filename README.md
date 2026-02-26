@@ -1,8 +1,8 @@
 # 🤖 Daily AI Digest
 
-> 每日AI情报摘要系统 - 自动从GitHub和YouTube获取AI领域热点内容，通过Gemini大模型深度分析后，以邮件形式发送每日情报摘要。
+> 每日AI情报摘要系统 - 自动从GitHub获取AI领域热点项目，通过大模型深度分析后，以邮件形式发送每日情报摘要。
 
-![Daily AI Digest](https://img.shields.io/badge/version-1.0.0-blue.svg)
+![Daily AI Digest](https://img.shields.io/badge/version-1.1.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.11+-green.svg)
 ![React](https://img.shields.io/badge/react-18.x-61dafb.svg)
 ![License](https://img.shields.io/badge/license-MIT-yellow.svg)
@@ -10,11 +10,13 @@
 ## ✨ 功能特性
 
 - 🐙 **GitHub Agent**: 自动检索AI/Agent领域最热门的Top 10项目，深度阅读README和核心代码
-- 📺 **YouTube Agent**: 自动检索AI领域最热门的Top 10视频，获取字幕并深度理解内容
-- 🧠 **Gemini 分析**: 使用Google Gemini Pro对每个项目/视频进行深度分析，提炼价值
+- 🧠 **LLM 分析**: 支持多种大模型（Kimi、DeepSeek、通义千问、Gemini等）进行深度分析
 - 📧 **邮件推送**: 精美HTML格式的每日摘要邮件，随时随地获取情报
 - ⏰ **定时执行**: 每天早上8点自动执行，也支持手动触发
 - 🖥️ **可视化看板**: React前端界面，查看历史数据和详细分析
+- 🇨🇳 **国内友好**: 支持国内大模型API，无需代理即可运行
+
+> ⚠️ **注意**: YouTube功能在国内环境需要代理才能使用。如无代理，YouTube功能将自动禁用，不影响GitHub分析功能。
 
 ## 🏗️ 系统架构
 
@@ -37,13 +39,13 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                       AI Agent 核心层                            │
 │  ┌──────────────────┐  ┌──────────────────────────────────────┐ │
-│  │ GitHub Agent     │  │ YouTube Agent                        │ │
+│  │ GitHub Agent     │  │ YouTube Agent (国内需代理)            │ │
 │  │ - 趋势检索       │  │ - 视频检索                           │ │
 │  │ - 仓库内容爬取   │  │ - 字幕/转录获取                      │ │
 │  │ - 代码文件分析   │  │ - 视频内容理解                       │ │
 │  └──────────────────┘  └──────────────────────────────────────┘ │
 │  ┌──────────────────────────────────────────────────────────────┐│
-│  │               Gemini 分析引擎                                ││
+│  │               LLM 分析引擎 (Kimi/DeepSeek/通义/Gemini)       ││
 │  └──────────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -97,9 +99,15 @@ cp .env.example .env
 编辑 `.env` 文件，填入以下配置（详细获取步骤见下文）：
 
 ```env
-GEMINI_API_KEY=your_gemini_api_key
+# LLM API 配置 (支持 Kimi/DeepSeek/通义千问 等 OpenAI 兼容接口)
+GEMINI_API_KEY=your_api_key
+GEMINI_BASE_URL=https://api.moonshot.cn/v1  # Kimi API
+GEMINI_MODEL=moonshot-v1-8k
+
+# GitHub Token
 GITHUB_TOKEN=your_github_token
-YOUTUBE_API_KEY=your_youtube_api_key
+
+# 邮件配置
 GMAIL_SENDER=your_email@gmail.com
 GMAIL_APP_PASSWORD=your_16_char_app_password
 DIGEST_RECIPIENT=your_email@gmail.com
@@ -167,12 +175,35 @@ bash ./stop.sh
 
 ## 🔑 API密钥获取指南
 
-### Gemini API Key
+### LLM API 配置（支持多种大模型）
 
-1. 访问 [Google AI Studio](https://aistudio.google.com/app/apikey)
-2. 登录Google账号
-3. 点击 "Create API Key"
-4. 复制生成的API Key
+本项目支持 OpenAI 兼容接口，可使用以下国内大模型：
+
+| 服务商 | BASE_URL | 模型示例 | 特点 |
+|--------|----------|---------|------|
+| Kimi (月之暗面) | `https://api.moonshot.cn/v1` | moonshot-v1-8k | 长上下文 |
+| DeepSeek | `https://api.deepseek.com/v1` | deepseek-chat | 价格便宜 |
+| 阿里云通义 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | qwen-turbo | 稳定可靠 |
+| 智谱 AI | `https://open.bigmodel.cn/api/paas/v4` | glm-4-flash | 免费额度多 |
+
+配置示例：
+
+```env
+# Kimi 配置示例
+GEMINI_API_KEY=sk-xxx
+GEMINI_BASE_URL=https://api.moonshot.cn/v1
+GEMINI_MODEL=moonshot-v1-8k
+
+# DeepSeek 配置示例
+GEMINI_API_KEY=sk-xxx
+GEMINI_BASE_URL=https://api.deepseek.com/v1
+GEMINI_MODEL=deepseek-chat
+
+# 私有部署/代理地址示例
+GEMINI_API_KEY=sk-xxx
+GEMINI_BASE_URL=http://10.225.31.12
+GEMINI_MODEL=kimi-k2.5
+```
 
 ### GitHub Personal Access Token
 
@@ -184,7 +215,7 @@ bash ./stop.sh
 6. 勾选 `public_repo` 权限
 7. 点击 "Generate token" 并复制
 
-### YouTube Data API Key
+### YouTube Data API Key（可选，国内需要代理）
 
 1. 访问 [Google Cloud Console](https://console.cloud.google.com/)
 2. 创建新项目或选择已有项目
@@ -193,6 +224,8 @@ bash ./stop.sh
 5. 左侧菜单 → **APIs & Services** → **Credentials**
 6. **Create Credentials** → **API key**
 7. 复制生成的API Key
+
+> ⚠️ 国内环境无法直接访问 YouTube API，需要配置代理或在环境变量中设置 `HTTPS_PROXY`。
 
 ### Gmail 应用专用密码
 
@@ -213,7 +246,7 @@ daily_ai_digest/
 ├── backend/                    # 后端服务
 │   ├── app/
 │   │   ├── agents/            # AI Agent模块
-│   │   │   ├── gemini_analyzer.py
+│   │   │   ├── gemini_analyzer.py  # LLM分析引擎
 │   │   │   ├── github_agent.py
 │   │   │   └── youtube_agent.py
 │   │   ├── api/               # API路由
@@ -246,7 +279,7 @@ daily_ai_digest/
 └── README.md
 ```
 
-## ?? API接口
+## 📡 API接口
 
 | 方法 | 路径                   | 描述                            |
 | ---- | ---------------------- | ------------------------------- |
@@ -263,28 +296,44 @@ daily_ai_digest/
 
 完整API文档访问：http://localhost:8000/docs
 
-单视频分析示例：
-
-```bash
-curl -X POST "http://localhost:8000/api/youtube/analyze" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "video_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-  }'
-```
-
 ## ⚙️ 配置说明
 
 | 配置项                   | 说明                        | 默认值           |
 | ------------------------ | --------------------------- | ---------------- |
-| `GEMINI_BASE_URL`        | OpenAI兼容网关地址（可选）  | 空               |
-| `GEMINI_MODEL`           | Gemini 主模型               | gemini-1.5-pro   |
-| `GEMINI_FALLBACK_MODELS` | Gemini 回退模型（逗号分隔） | gemini-1.5-flash |
-| `SCHEDULE_HOUR`          | 每日执行小时                | 8                |
-| `SCHEDULE_MINUTE`        | 每日执行分钟                | 0                |
-| `TIMEZONE`               | 时区                        | Asia/Shanghai    |
-| `DEBUG`                  | 调试模式                    | false            |
-| `LOG_LEVEL`              | 日志级别                    | INFO             |
+| `GEMINI_API_KEY`        | LLM API 密钥               | 空（必填）       |
+| `GEMINI_BASE_URL`       | LLM API 地址（OpenAI兼容） | 空               |
+| `GEMINI_MODEL`          | 主模型名称                  | kimi-k2.5        |
+| `GEMINI_FALLBACK_MODELS`| 回退模型（逗号分隔）        | 空               |
+| `GITHUB_TOKEN`          | GitHub Token               | 空（必填）       |
+| `YOUTUBE_API_KEY`       | YouTube API Key            | 空（可选）       |
+| `SCHEDULE_HOUR`         | 每日执行小时                | 8                |
+| `SCHEDULE_MINUTE`       | 每日执行分钟                | 0                |
+| `TIMEZONE`              | 时区                        | Asia/Shanghai    |
+| `DEBUG`                 | 调试模式                    | false            |
+| `LOG_LEVEL`             | 日志级别                    | INFO             |
+
+## 🇨🇳 国内部署说明
+
+### 无需代理即可使用的功能
+
+- ✅ GitHub 项目检索和分析
+- ✅ 使用国内大模型进行内容分析
+- ✅ 邮件发送
+
+### 需要代理的功能
+
+- ⚠️ YouTube 视频检索和分析（需配置 `HTTPS_PROXY` 环境变量）
+
+### 推荐配置
+
+使用国内大模型 API（如 Kimi、DeepSeek、通义千问等），无需代理即可完整运行：
+
+```env
+# Kimi API 示例
+GEMINI_API_KEY=sk-xxx
+GEMINI_BASE_URL=https://api.moonshot.cn/v1
+GEMINI_MODEL=moonshot-v1-8k
+```
 
 ## 📧 Gmail 限制说明
 
