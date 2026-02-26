@@ -4,6 +4,7 @@ YouTube Agent - 检索和分析YouTube热门AI视频
 
 import asyncio
 import logging
+import os
 import re
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
@@ -11,6 +12,8 @@ from typing import List, Optional, Dict, Any
 import socket
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+import httplib2
+import httpx
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import (
     TranscriptsDisabled,
@@ -53,35 +56,89 @@ class YouTubeAgent:
         self.client = None
         self.top_n = settings.youtube_top_n
         self._network_available = None  # 缓存网络状态
-        
+        self._disabled = False  # 是否禁用 YouTube 功能
+
         if self.api_key:
-            self.client = build("youtube", "v3", developerKey=self.api_key)
+            self.client = self._build_client()
             logger.info("YouTube Agent 初始化完成")
         else:
-            logger.warning("未配置 YouTube API Key，功能将不可用")
+            self._disabled = True
+            logger.warning("未配置 YouTube API Key，YouTube 功能已禁用")
+
+    def _get_proxy_url(self) -> str:
+        """从环境变量读取代理地址（优先 HTTPS_PROXY）。"""
+        return (
+            os.getenv("HTTPS_PROXY")
+            or os.getenv("https_proxy")
+            or os.getenv("HTTP_PROXY")
+            or os.getenv("http_proxy")
+            or os.getenv("ALL_PROXY")
+            or os.getenv("all_proxy")
+            or ""
+        ).strip()
+
+    def _build_client(self):
+        """构建 YouTube API 客户端。
+
+        说明：云服务器可能无法直连 Google，需要通过代理访问。
+        googleapiclient 默认底层使用 httplib2，这里显式注入 proxy_info，避免不走环境代理。
+        """
+        proxy_url = self._get_proxy_url()
+        if not proxy_url:
+            return build("youtube", "v3", developerKey=self.api_key)
+
+        # 优先使用 httplib2 内置的 from_environment（不依赖 PySocks）。
+        try:
+            from_env = getattr(getattr(httplib2, "ProxyInfo", None), "from_environment", None)
+            if callable(from_env):
+                proxy_info = from_env()
+                if proxy_info is not None:
+                    http = httplib2.Http(proxy_info=proxy_info, timeout=30)
+                    logger.info("YouTube Agent 使用环境变量代理访问 Google API: %s", proxy_url)
+                    return build("youtube", "v3", developerKey=self.api_key, http=http)
+        except Exception as e:
+            logger.warning("YouTube Agent 读取环境代理失败，将尝试默认客户端: %s", e)
+
+        # 兜底：直接 build（部分环境下 httplib2 会自动读取 http_proxy/https_proxy）
+        logger.info("YouTube Agent 使用默认客户端（可能会读取环境代理）: %s", proxy_url)
+        return build("youtube", "v3", developerKey=self.api_key)
     
     def _check_network(self) -> bool:
         """快速检测 Google API 网络连通性"""
+        if self._disabled:
+            return False
         if self._network_available is not None:
             return self._network_available
-        
-        try:
-            # 使用短超时检测 Google API 连通性
-            socket.setdefaulttimeout(5)
-            socket.create_connection(("www.googleapis.com", 443), timeout=5)
-            self._network_available = True
-            logger.info("YouTube API 网络连通性检测通过")
-        except (socket.timeout, socket.error, OSError) as e:
-            self._network_available = False
-            logger.warning(f"YouTube API 网络不可用: {e}")
-        finally:
-            socket.setdefaulttimeout(None)
-        
+
+        # 如果设置了代理，必须通过代理探测网络；直连 socket 会在国内环境超时。
+        proxy_url = self._get_proxy_url()
+        if proxy_url:
+            try:
+                with httpx.Client(timeout=5, trust_env=True, follow_redirects=True) as client:
+                    # 204 探测接口，能快速判断是否可达
+                    resp = client.get("https://www.googleapis.com/generate_204")
+                self._network_available = resp.status_code in {200, 204}
+                if self._network_available:
+                    logger.info("YouTube API 网络连通性检测通过（proxy）")
+                else:
+                    logger.warning(
+                        "YouTube API 网络检测失败（proxy），status=%s", resp.status_code
+                    )
+            except Exception as e:
+                self._network_available = False
+                logger.warning(f"YouTube API 网络不可用（proxy）: {e}")
+            return self._network_available
+
+        # 国内环境无代理时，直接标记网络不可用，避免长时间超时
+        logger.warning("YouTube API: 国内环境无代理，跳过网络检测")
+        self._network_available = False
         return self._network_available
     
     @property
     def is_available(self) -> bool:
         """检查 YouTube 客户端是否可用"""
+        if self._disabled:
+            return False
         return self.client is not None
 
     def extract_video_id(self, video_input: str) -> Optional[str]:
