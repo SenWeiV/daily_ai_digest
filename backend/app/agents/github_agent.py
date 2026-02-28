@@ -1,51 +1,40 @@
 """
-GitHub Agent - 检索和分析GitHub热门AI项目
+GitHub Agent - 从 GitHub Trending 页面检索热门AI项目
 """
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any
+from datetime import datetime, date
+from typing import List, Optional, Dict, Any, Literal
 
+import httpx
+from bs4 import BeautifulSoup
 from github import Github, GithubException
 from github.Repository import Repository
 
 from app.config import settings
 from app.schemas import GitHubDigestItem
 from app.agents.gemini_analyzer import gemini_analyzer
-from app.utils.helpers import get_yesterday, truncate_text
+from app.utils.helpers import truncate_text
 
 logger = logging.getLogger(__name__)
 
 
 class GitHubAgent:
-    """GitHub 热门项目检索和分析 Agent"""
+    """GitHub Trending 热门项目检索和分析 Agent"""
     
-    # AI/AGI/AI Agent 相关搜索关键词
-    SEARCH_KEYWORDS = [
-        "AI agent",
-        "LLM agent",
-        "autonomous agent",
-        "AGI artificial general intelligence",
-        "large language model",
-        "GPT-4 GPT-5",
-        "Claude Anthropic",
-        "Gemini AI",
-        "RAG retrieval augmented",
-        "multi-agent system",
-        "AI coding assistant",
-        "AI workflow automation",
-        "reasoning AI",
-        "agentic AI"
-    ]
+    # GitHub Trending URL
+    TRENDING_URL = "https://github.com/trending"
     
-    # 核心文件名模式（用于识别入口文件）
-    CORE_FILE_PATTERNS = [
-        "main.py", "app.py", "run.py", "index.py",
-        "main.ts", "index.ts", "app.ts",
-        "main.js", "index.js", "app.js",
-        "agent.py", "llm.py", "core.py",
-        "src/main.py", "src/index.py", "src/app.py"
+    # AI/ML 相关关键词（用于过滤）
+    AI_KEYWORDS = [
+        "ai", "llm", "agent", "gpt", "claude", "gemini", "openai", "anthropic",
+        "machine learning", "deep learning", "neural", "model", "language model",
+        "rag", "retrieval", "embedding", "vector", "transformer",
+        "autonomous", "bot", "assistant", "chatbot", "copilot",
+        "diffusion", "stable diffusion", "image generation", "text to image",
+        "fine-tune", "training", "inference", "prompt",
+        "mcp", "model context protocol"
     ]
     
     def __init__(self):
@@ -65,96 +54,152 @@ class GitHubAgent:
         """检查 GitHub 客户端是否可用"""
         return self.client is not None
     
-    async def search_trending_repos(
+    async def fetch_trending_repos(
         self,
-        keywords: Optional[List[str]] = None,
-        days_ago: int = 1,
-        min_stars: int = 50
-    ) -> List[Repository]:
+        time_range: Literal["daily", "weekly", "monthly"] = "daily",
+        language: str = ""
+    ) -> List[Dict[str, Any]]:
         """
-        搜索过去24小时内 star 增长最快的 AI 相关仓库
-        
-        策略：搜索最近 N 天内有更新（pushed）的项目，按 star 排序
-        活跃更新 + 高 star = 近期热门（star增长快的项目通常也在活跃更新）
+        从 GitHub Trending 页面抓取热门仓库
         
         Args:
-            keywords: 搜索关键词列表
-            days_ago: 搜索最近N天内有更新的项目（默认1天=24小时）
-            min_stars: 最小Star数过滤（默认50）
+            time_range: 时间范围 - daily(今日), weekly(本周), monthly(本月)
+            language: 编程语言筛选（默认空表示所有语言）
         
         Returns:
-            Repository对象列表
+            包含仓库基本信息的字典列表
+        """
+        # 构建URL
+        url = f"{self.TRENDING_URL}"
+        if language:
+            url += f"/{language}"
+        url += f"?since={time_range}"
+        
+        logger.info(f"正在抓取 GitHub Trending: {url}")
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate, br",
+            "DNT": "1",
+            "Connection": "keep-alive",
+        }
+        
+        trending_repos = []
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                response = await client.get(url, headers=headers)
+                response.raise_for_status()
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # 查找所有 trending 仓库条目
+                repo_list = soup.find_all('article', class_='Box-row')
+                
+                for article in repo_list:
+                    try:
+                        # 提取仓库名称
+                        h2_tag = article.find('h2', class_='h3')
+                        if not h2_tag:
+                            continue
+                        
+                        repo_link = h2_tag.find('a')
+                        if not repo_link:
+                            continue
+                        
+                        repo_full_name = repo_link.get_text(strip=True).replace('\n', '').replace(' ', '')
+                        repo_url = f"https://github.com{repo_link['href']}"
+                        
+                        # 提取描述
+                        description_tag = article.find('p', class_='col-9')
+                        description = description_tag.get_text(strip=True) if description_tag else ""
+                        
+                        # 提取编程语言
+                        lang_tag = article.find('span', itemprop='programmingLanguage')
+                        language = lang_tag.get_text(strip=True) if lang_tag else "Unknown"
+                        
+                        # 提取 stars 增长数
+                        stars_tag = article.find('span', class_='d-inline-block float-sm-right')
+                        stars_today = 0
+                        if stars_tag:
+                            stars_text = stars_tag.get_text(strip=True)
+                            # 解析 "XXX stars today/week/month"
+                            try:
+                                stars_today = int(stars_text.split()[0].replace(',', ''))
+                            except (ValueError, IndexError):
+                                pass
+                        
+                        trending_repos.append({
+                            "full_name": repo_full_name,
+                            "url": repo_url,
+                            "description": description,
+                            "language": language,
+                            "stars_today": stars_today,
+                            "time_range": time_range
+                        })
+                        
+                    except Exception as e:
+                        logger.warning(f"解析单个仓库失败: {e}")
+                        continue
+                
+                logger.info(f"从 Trending 页面找到 {len(trending_repos)} 个仓库")
+                
+        except httpx.HTTPError as e:
+            logger.error(f"请求 GitHub Trending 失败: {e}")
+        except Exception as e:
+            logger.error(f"抓取 Trending 页面异常: {e}")
+        
+        return trending_repos
+    
+    def is_ai_related(self, repo_info: Dict[str, Any]) -> bool:
+        """
+        判断仓库是否与 AI 相关
+        
+        Args:
+            repo_info: 仓库信息字典
+        
+        Returns:
+            是否AI相关
+        """
+        text_to_check = f"{repo_info.get('description', '')} {repo_info.get('full_name', '')}".lower()
+        
+        for keyword in self.AI_KEYWORDS:
+            if keyword.lower() in text_to_check:
+                return True
+        
+        return False
+    
+    async def get_repo_details_from_api(self, full_name: str) -> Optional[Repository]:
+        """
+        使用 GitHub API 获取仓库详细信息
+        
+        Args:
+            full_name: 仓库全名 (owner/repo)
+        
+        Returns:
+            Repository 对象或 None
         """
         if not self.is_available:
-            logger.error("GitHub 客户端未初始化")
-            return []
+            return None
         
-        keywords = keywords or self.SEARCH_KEYWORDS
-        target_date = datetime.now() - timedelta(days=days_ago)
-        date_str = target_date.strftime("%Y-%m-%d")
-        
-        all_repos: Dict[str, Repository] = {}
-        
-        for keyword in keywords:
-            try:
-                # 构建搜索查询：搜索最近N天内有更新的项目，按star排序
-                # 活跃更新 + 高star = 近期热门
-                query = f"{keyword} pushed:>={date_str} stars:>={min_stars}"
-                
-                # 异步执行搜索（GitHub API是同步的，放到线程池）
-                def search_repos(q):
-                    try:
-                        result = self.client.search_repositories(
-                            query=q,
-                            sort="stars",
-                            order="desc"
-                        )
-                        # 安全地获取前20个结果
-                        repos_list = []
-                        for i, repo in enumerate(result):
-                            if i >= 20:
-                                break
-                            repos_list.append(repo)
-                        return repos_list
-                    except Exception as e:
-                        logger.warning(f"搜索执行失败: {e}")
-                        return []
-                
-                repos = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: search_repos(query)
-                )
-                
-                # 去重并合并
-                for repo in repos:
-                    if repo.full_name not in all_repos:
-                        all_repos[repo.full_name] = repo
-                
-                logger.info(f"关键词 '{keyword}' 找到 {len(repos)} 个新项目")
-                
-                # 避免触发GitHub API限流
-                await asyncio.sleep(0.5)
-                
-            except GithubException as e:
-                logger.error(f"搜索关键词 '{keyword}' 失败: {e}")
-                continue
-            except Exception as e:
-                logger.error(f"搜索异常: {e}")
-                continue
-        
-        # 按Star数排序（新项目中star最高的 = 增长最快）
-        sorted_repos = sorted(
-            all_repos.values(),
-            key=lambda r: r.stargazers_count,
-            reverse=True
-        )
-        
-        logger.info(f"共找到 {len(sorted_repos)} 个去重后的活跃项目（最近{days_ago}天更新）")
-        return sorted_repos[:self.top_n * 2]
+        try:
+            def fetch_repo():
+                return self.client.get_repo(full_name)
+            
+            repo = await asyncio.get_event_loop().run_in_executor(None, fetch_repo)
+            return repo
+        except GithubException as e:
+            logger.warning(f"获取仓库详情失败 [{full_name}]: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"API 调用异常 [{full_name}]: {e}")
+            return None
     
     async def fetch_repo_details(self, repo: Repository) -> Dict[str, Any]:
         """
-        获取仓库详细信息
+        获取仓库详细信息（README、代码文件等）
         
         Args:
             repo: GitHub Repository对象
@@ -217,7 +262,8 @@ class GitHubAgent:
     async def analyze_repo(
         self,
         repo: Repository,
-        details: Dict[str, Any]
+        details: Dict[str, Any],
+        stars_today: int = 0
     ) -> GitHubDigestItem:
         """
         使用Gemini分析单个仓库
@@ -225,6 +271,7 @@ class GitHubAgent:
         Args:
             repo: GitHub Repository对象
             details: 仓库详情（README、代码文件等）
+            stars_today: 今日新增star数
         
         Returns:
             GitHubDigestItem 分析结果
@@ -234,7 +281,7 @@ class GitHubAgent:
             repo_name=repo.full_name,
             repo_url=repo.html_url,
             stars=repo.stargazers_count,
-            stars_today=0,  # 需要额外API获取，暂时为0
+            stars_today=stars_today,
             forks=repo.forks_count,
             description=repo.description or "",
             main_language=repo.language or "Unknown",
@@ -270,56 +317,87 @@ class GitHubAgent:
         
         return item
     
+    async def get_trending_repos(
+        self,
+        time_range: Literal["daily", "weekly", "monthly"] = "daily"
+    ) -> List[GitHubDigestItem]:
+        """
+        从 GitHub Trending 获取Top N热门AI仓库（完整流程）
+        
+        Args:
+            time_range: 时间范围 - daily(今日), weekly(本周), monthly(本月)
+        
+        Returns:
+            GitHubDigestItem列表
+        """
+        logger.info(f"开始从 GitHub Trending 获取 [{time_range}] Top{self.top_n} 热门AI仓库...")
+        
+        # 1. 从 Trending 页面抓取仓库列表
+        trending_data = await self.fetch_trending_repos(time_range=time_range)
+        
+        if not trending_data:
+            logger.warning("未能从 Trending 页面获取任何仓库")
+            return []
+        
+        # 2. 筛选AI相关的仓库
+        ai_repos = [r for r in trending_data if self.is_ai_related(r)]
+        logger.info(f"筛选出 {len(ai_repos)} 个AI相关仓库")
+        
+        # 如果没有AI相关的，取前top_n个
+        if not ai_repos:
+            ai_repos = trending_data[:self.top_n]
+            logger.info(f"未找到AI相关仓库，使用前 {len(ai_repos)} 个热门仓库")
+        
+        # 3. 并发获取详情和分析
+        results: List[GitHubDigestItem] = []
+        
+        for repo_info in ai_repos[:self.top_n]:
+            try:
+                # 使用API获取完整仓库信息
+                repo = await self.get_repo_details_from_api(repo_info["full_name"])
+                
+                if not repo:
+                    logger.warning(f"无法获取仓库详情: {repo_info['full_name']}")
+                    continue
+                
+                # 获取详情
+                details = await self.fetch_repo_details(repo)
+                
+                # 分析
+                item = await self.analyze_repo(
+                    repo, 
+                    details, 
+                    stars_today=repo_info.get("stars_today", 0)
+                )
+                results.append(item)
+                
+                logger.info(f"完成分析: {repo.full_name} ⭐{repo.stargazers_count} (+{item.stars_today})")
+                
+                # 避免API限流
+                await asyncio.sleep(1)
+                
+            except Exception as e:
+                logger.error(f"处理仓库失败 [{repo_info.get('full_name', 'unknown')}]: {e}")
+                continue
+        
+        # 4. 最终排序（按今日新增stars）
+        results.sort(key=lambda x: x.stars_today, reverse=True)
+        
+        logger.info(f"GitHub Agent 完成，共获取 {len(results)} 个项目")
+        return results[:self.top_n]
+    
+    # 保持向后兼容的方法
     async def get_top_repos(
         self,
         keywords: Optional[List[str]] = None,
         days_ago: int = 1
     ) -> List[GitHubDigestItem]:
         """
-        获取Top N热门AI仓库（完整流程）
+        获取Top N热门AI仓库（向后兼容）
         
-        Args:
-            keywords: 搜索关键词
-            days_ago: 搜索时间范围（天）
-        
-        Returns:
-            GitHubDigestItem列表
+        现在直接调用 get_trending_repos
         """
-        logger.info(f"开始获取GitHub Top{self.top_n}热门仓库...")
-        
-        # 1. 搜索热门仓库
-        repos = await self.search_trending_repos(keywords, days_ago)
-        
-        if not repos:
-            logger.warning("未找到任何仓库")
-            return []
-        
-        # 2. 并发获取详情和分析
-        results: List[GitHubDigestItem] = []
-        
-        for repo in repos[:self.top_n]:
-            try:
-                # 获取详情
-                details = await self.fetch_repo_details(repo)
-                
-                # 分析
-                item = await self.analyze_repo(repo, details)
-                results.append(item)
-                
-                logger.info(f"完成分析: {repo.full_name} ⭐{repo.stargazers_count}")
-                
-                # 避免API限流
-                await asyncio.sleep(1)
-                
-            except Exception as e:
-                logger.error(f"处理仓库失败 [{repo.full_name}]: {e}")
-                continue
-        
-        # 3. 最终排序
-        results.sort(key=lambda x: x.stars, reverse=True)
-        
-        logger.info(f"GitHub Agent 完成，共获取 {len(results)} 个项目")
-        return results[:self.top_n]
+        return await self.get_trending_repos(time_range="daily")
 
 
 # 全局实例

@@ -66,6 +66,7 @@ class DigestRecord(BaseModel):
     """每日摘要记录"""
     id: Optional[int] = None
     digest_date: date = Field(..., description="摘要日期")
+    digest_type: str = Field(default="daily", description="摘要类型: daily/weekly/monthly")
     github_data: List[GitHubDigestItem] = Field(default_factory=list)
     youtube_data: List[YouTubeDigestItem] = Field(default_factory=list)
     email_sent: bool = Field(default=False, description="邮件是否已发送")
