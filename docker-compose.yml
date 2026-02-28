@@ -1,0 +1,65 @@
+# Daily AI Digest - Docker Compose 配置
+# 用于在云服务器中隔离部署整个应用栈
+
+version: '3.8'
+
+services:
+  # 后端服务
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: daily-ai-digest-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # LLM API 配置
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_BASE_URL=${GEMINI_BASE_URL:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-kimi-k2.5}
+      - GEMINI_FALLBACK_MODELS=${GEMINI_FALLBACK_MODELS:-}
+      
+      # GitHub API
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      
+      # YouTube API
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY:-}
+      
+      # Gmail SMTP
+      - GMAIL_SENDER=${GMAIL_SENDER:-}
+      - GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD:-}
+      - DIGEST_RECIPIENT=${DIGEST_RECIPIENT:-}
+      
+      # 定时任务配置
+      - SCHEDULE_HOUR=${SCHEDULE_HOUR:-8}
+      - SCHEDULE_MINUTE=${SCHEDULE_MINUTE:-0}
+      - TIMEZONE=${TIMEZONE:-Asia/Shanghai}
+      
+      # 应用配置
+      - DEBUG=${DEBUG:-false}
+      - DATABASE_PATH=/app/data/digest.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      
+      # CORS 配置
+      - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS:-https://senweiv.github.io,http://localhost:3000}
+    volumes:
+      # 数据持久化：将容器内的数据目录映射到宿主机
+      - ./data:/app/data
+      # 可选：挂载环境变量文件（方便调试）
+      # - ./backend/.env:/app/backend/.env:ro
+    networks:
+      - daily-ai-digest-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  daily-ai-digest-network:
+    driver: bridge
+    name: daily-ai-digest-network

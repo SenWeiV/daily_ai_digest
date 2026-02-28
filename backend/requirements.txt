@@ -31,6 +31,7 @@ pydantic-settings==2.1.0
 
 # HTTP Client
 httpx==0.26.0
+httplib2==0.22.0
 
 # Utilities
 tenacity==8.2.3
