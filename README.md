@@ -2,10 +2,16 @@
 
 > 每日AI情报摘要系统 - 自动从GitHub获取AI领域热点项目，通过大模型深度分析后，以邮件形式发送每日情报摘要。
 
-![Daily AI Digest](https://img.shields.io/badge/version-1.1.0-blue.svg)
-![Python](https://img.shields.io/badge/python-3.11+-green.svg)
+![Daily AI Digest](https://img.shields.io/badge/version-1.2.0-blue.svg)
+![Python](https://img.shields.io/badge/python-3.10+-green.svg)
 ![React](https://img.shields.io/badge/react-18.x-61dafb.svg)
 ![License](https://img.shields.io/badge/license-MIT-yellow.svg)
+
+## 🌐 线上部署
+
+- **前端**: https://senweiv.github.io/daily_ai_digest/
+- **后端 API**: http://120.48.83.123:8000
+- **API 文档**: http://120.48.83.123:8000/docs
 
 ## ✨ 功能特性
 
@@ -317,7 +323,7 @@ daily_ai_digest/
 ### 无需代理即可使用的功能
 
 - ✅ GitHub 项目检索和分析
-- ✅ 使用国内大模型进行内容分析
+- ✅ 使用国内大模型进行内容分析（Kimi、DeepSeek、通义千问等）
 - ✅ 邮件发送
 
 ### 需要代理的功能
@@ -329,10 +335,25 @@ daily_ai_digest/
 使用国内大模型 API（如 Kimi、DeepSeek、通义千问等），无需代理即可完整运行：
 
 ```env
-# Kimi API 示例
+# Kimi API 示例（推荐）
 GEMINI_API_KEY=sk-xxx
 GEMINI_BASE_URL=https://api.moonshot.cn/v1
 GEMINI_MODEL=moonshot-v1-8k
+
+# DeepSeek API 示例
+GEMINI_API_KEY=sk-xxx
+GEMINI_BASE_URL=https://api.deepseek.com/v1
+GEMINI_MODEL=deepseek-chat
+```
+
+### 部署验证
+
+部署后可运行 smoke test 验证配置：
+
+```bash
+cd backend
+source venv/bin/activate
+python smoke_test.py
 ```
 
 ## 📧 Gmail 限制说明
