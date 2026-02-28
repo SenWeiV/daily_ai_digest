@@ -405,18 +405,44 @@ README内容：
         Returns:
             综合总结文本
         """
+        return await self.generate_period_summary(github_items, youtube_items, period="daily")
+    
+    async def generate_period_summary(
+        self,
+        github_items: List[Dict],
+        youtube_items: List[Dict],
+        period: str = "daily"
+    ) -> str:
+        """
+        生成周期综合总结（日/周/月）
+        
+        Args:
+            github_items: GitHub 项目列表
+            youtube_items: YouTube 视频列表
+            period: 周期类型 (daily/weekly/monthly)
+        
+        Returns:
+            综合总结文本
+        """
         # 构建摘要内容
         github_summary = "\n".join([
             f"- {item.get('repo_name', 'Unknown')}: {item.get('summary', 'No summary')}"
-            for item in github_items[:5]
+            for item in github_items[:10]
         ])
         
         youtube_summary = "\n".join([
             f"- {item.get('title', 'Unknown')}: {item.get('content_summary', 'No summary')}"
-            for item in youtube_items[:5]
+            for item in youtube_items[:10]
         ])
         
-        prompt = f"""作为AI领域观察者，请基于今日热门内容生成一段简洁的每日总结（200字内）：
+        period_names = {
+            "daily": ("今日", "200"),
+            "weekly": ("本周", "300"),
+            "monthly": ("本月", "400")
+        }
+        period_name, max_chars = period_names.get(period, ("本周期", "300"))
+        
+        prompt = f"""作为AI领域观察者，请基于{period_name}热门内容生成一段简洁的总结（{max_chars}字内）：
 
 GitHub热门项目：
 {github_summary}
@@ -424,14 +450,15 @@ GitHub热门项目：
 YouTube热门视频：
 {youtube_summary}
 
-请总结今日AI领域的主要趋势和值得关注的方向。"""
+请总结{period_name}AI领域的主要趋势、技术突破和值得关注的方向。"""
 
         try:
             response = await self._generate_content(prompt)
             return response.strip()
         except Exception as e:
-            logger.error(f"生成每日总结失败: {e}")
-            return "今日AI领域有多个值得关注的项目和视频，详情请查看下方内容。"
+            logger.error(f"生成{period}总结失败: {e}")
+            period_desc = {"daily": "今日", "weekly": "本周", "monthly": "本月"}.get(period, "本周期")
+            return f"{period_desc}AI领域有多个值得关注的项目和视频，详情请查看下方内容。"
 
 
 # 全局实例

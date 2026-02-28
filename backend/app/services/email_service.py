@@ -3,13 +3,13 @@
 """
 
 import logging
-import smtplib
 import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, date
 from typing import List, Optional
 
+import aiosmtplib
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config import settings
@@ -251,10 +251,11 @@ class EmailService:
         github_items: List[GitHubDigestItem],
         youtube_items: List[YouTubeDigestItem],
         daily_summary: Optional[str] = None,
-        recipient: Optional[str] = None
+        recipient: Optional[str] = None,
+        subject_suffix: str = "Daily"
     ) -> bool:
         """
-        发送每日摘要邮件
+        发送每日/每周/每月摘要邮件
         
         Args:
             digest_date: 摘要日期
@@ -262,6 +263,7 @@ class EmailService:
             youtube_items: YouTube视频列表
             daily_summary: 每日总结
             recipient: 收件人（可选，默认使用配置）
+            subject_suffix: 邮件主题后缀 (Daily/Weekly/Monthly)
         
         Returns:
             是否发送成功
@@ -275,7 +277,7 @@ class EmailService:
         try:
             # 创建邮件
             msg = MIMEMultipart("alternative")
-            msg["Subject"] = f"🤖 Daily AI Digest - {digest_date.strftime('%Y-%m-%d')} | GitHub Top {len(github_items)} + YouTube Top {len(youtube_items)}"
+            msg["Subject"] = f"🤖 {subject_suffix} AI Digest - {digest_date.strftime('%Y-%m-%d')} | GitHub Top {len(github_items)} + YouTube Top {len(youtube_items)}"
             msg["From"] = self.sender_email
             msg["To"] = recipient
             
@@ -298,18 +300,21 @@ class EmailService:
             # 发送邮件
             context = ssl.create_default_context()
             
-            with smtplib.SMTP(self.SMTP_SERVER, self.SMTP_PORT) as server:
-                server.starttls(context=context)
-                server.login(self.sender_email, self.app_password)
-                server.sendmail(self.sender_email, recipient, msg.as_string())
+            async with aiosmtplib.SMTP(
+                hostname=self.SMTP_SERVER,
+                port=self.SMTP_PORT,
+                tls_context=context
+            ) as server:
+                await server.login(self.sender_email, self.app_password)
+                await server.sendmail(self.sender_email, recipient, msg.as_string())
             
             logger.info(f"邮件发送成功: {recipient}")
             return True
             
-        except smtplib.SMTPAuthenticationError as e:
+        except aiosmtplib.errors.SMTPAuthenticationError as e:
             logger.error(f"邮件认证失败: {e}")
             raise
-        except smtplib.SMTPException as e:
+        except aiosmtplib.errors.SMTPException as e:
             logger.error(f"邮件发送失败: {e}")
             raise
         except Exception as e:
@@ -351,10 +356,13 @@ class EmailService:
             
             context = ssl.create_default_context()
             
-            with smtplib.SMTP(self.SMTP_SERVER, self.SMTP_PORT) as server:
-                server.starttls(context=context)
-                server.login(self.sender_email, self.app_password)
-                server.sendmail(self.sender_email, recipient, msg.as_string())
+            async with aiosmtplib.SMTP(
+                hostname=self.SMTP_SERVER,
+                port=self.SMTP_PORT,
+                tls_context=context
+            ) as server:
+                await server.login(self.sender_email, self.app_password)
+                await server.sendmail(self.sender_email, recipient, msg.as_string())
             
             logger.info(f"测试邮件发送成功: {recipient}")
             return True

@@ -27,17 +27,21 @@ class DigestRecordModel:
         github_json = json.dumps([item.model_dump() for item in record.github_data], ensure_ascii=False)
         youtube_json = json.dumps([item.model_dump() for item in record.youtube_data], ensure_ascii=False)
         
+        # 使用 digest_type 和 digest_date 作为联合唯一键
+        digest_type = getattr(record, 'digest_type', 'daily')
+        
         cursor = await db.execute(
             """
-            INSERT INTO digest_records (digest_date, github_data, youtube_data, email_sent, email_sent_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(digest_date) DO UPDATE SET
+            INSERT INTO digest_records (digest_date, digest_type, github_data, youtube_data, email_sent, email_sent_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(digest_date, digest_type) DO UPDATE SET
                 github_data = excluded.github_data,
                 youtube_data = excluded.youtube_data,
                 updated_at = CURRENT_TIMESTAMP
             """,
             (
                 record.digest_date.isoformat(),
+                digest_type,
                 github_json,
                 youtube_json,
                 1 if record.email_sent else 0,
@@ -48,17 +52,22 @@ class DigestRecordModel:
         return cursor.lastrowid
     
     @staticmethod
-    async def get_by_date(db: aiosqlite.Connection, digest_date: date) -> Optional[DigestRecord]:
-        """根据日期获取摘要记录"""
+    async def get_by_date(db: aiosqlite.Connection, digest_date: date, digest_type: str = "daily") -> Optional[DigestRecord]:
+        """根据日期和类型获取摘要记录"""
         cursor = await db.execute(
-            "SELECT * FROM digest_records WHERE digest_date = ?",
-            (digest_date.isoformat(),)
+            "SELECT * FROM digest_records WHERE digest_date = ? AND digest_type = ?",
+            (digest_date.isoformat(), digest_type)
         )
         row = await cursor.fetchone()
         if not row:
             return None
         
         return DigestRecordModel._row_to_record(row)
+    
+    @staticmethod
+    async def get_by_date_and_type(db: aiosqlite.Connection, digest_date: date, digest_type: str = "daily") -> Optional[DigestRecord]:
+        """根据日期和类型获取摘要记录（别名方法）"""
+        return await DigestRecordModel.get_by_date(db, digest_date, digest_type)
     
     @staticmethod
     async def get_latest(db: aiosqlite.Connection) -> Optional[DigestRecord]:
