@@ -86,10 +86,13 @@ def _check_config():
     else:
         logger.info("✅ YouTube API Key 已配置")
     
-    if not settings.gmail_sender or not settings.gmail_app_password:
-        issues.append("⚠️  Gmail 邮件服务未配置")
+    # 邮件服务检查（支持新配置和旧配置）
+    email_configured = (settings.email_sender and settings.email_password) or (settings.gmail_sender and settings.gmail_app_password)
+    if not email_configured:
+        issues.append("⚠️  邮件服务未配置")
     else:
-        logger.info("✅ Gmail 邮件服务已配置")
+        sender = settings.email_sender or settings.gmail_sender
+        logger.info(f"✅ 邮件服务已配置 ({sender})")
     
     if issues:
         logger.warning("-" * 40)

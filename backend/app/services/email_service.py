@@ -22,17 +22,20 @@ logger = logging.getLogger(__name__)
 class EmailService:
     """邮件发送服务"""
     
-    SMTP_SERVER = "smtp.gmail.com"
-    SMTP_PORT = 587
-    
     def __init__(self):
         """初始化邮件服务"""
-        self.sender_email = settings.gmail_sender
-        self.app_password = settings.gmail_app_password
-        self.recipient_email = settings.digest_recipient or settings.gmail_sender
+        # 优先使用新配置，兼容旧配置
+        self.smtp_server = settings.smtp_server
+        self.smtp_port = settings.smtp_port
+        self.use_ssl = settings.smtp_use_ssl
+        
+        # 发件人信息（优先新配置，兼容旧配置）
+        self.sender_email = settings.email_sender or settings.gmail_sender
+        self.app_password = settings.email_password or settings.gmail_app_password
+        self.recipient_email = settings.email_recipient or settings.digest_recipient or self.sender_email
         
         if self.sender_email and self.app_password:
-            logger.info(f"邮件服务初始化完成，发件人: {self.sender_email}")
+            logger.info(f"邮件服务初始化完成，发件人: {self.sender_email}, SMTP: {self.smtp_server}:{self.smtp_port}")
         else:
             logger.warning("邮件服务未配置完整")
     
@@ -300,13 +303,25 @@ class EmailService:
             # 发送邮件
             context = ssl.create_default_context()
             
-            async with aiosmtplib.SMTP(
-                hostname=self.SMTP_SERVER,
-                port=self.SMTP_PORT,
-                tls_context=context
-            ) as server:
-                await server.login(self.sender_email, self.app_password)
-                await server.sendmail(self.sender_email, recipient, msg.as_string())
+            # 根据配置选择连接方式
+            if self.use_ssl:
+                # SSL 直连（163/QQ 邮箱使用端口 465）
+                async with aiosmtplib.SMTP_SSL(
+                    hostname=self.smtp_server,
+                    port=self.smtp_port,
+                    context=context
+                ) as server:
+                    await server.login(self.sender_email, self.app_password)
+                    await server.sendmail(self.sender_email, recipient, msg.as_string())
+            else:
+                # STARTTLS（Gmail 使用端口 587）
+                async with aiosmtplib.SMTP(
+                    hostname=self.smtp_server,
+                    port=self.smtp_port
+                ) as server:
+                    await server.starttls(context=context)
+                    await server.login(self.sender_email, self.app_password)
+                    await server.sendmail(self.sender_email, recipient, msg.as_string())
             
             logger.info(f"邮件发送成功: {recipient}")
             return True
@@ -356,13 +371,25 @@ class EmailService:
             
             context = ssl.create_default_context()
             
-            async with aiosmtplib.SMTP(
-                hostname=self.SMTP_SERVER,
-                port=self.SMTP_PORT,
-                tls_context=context
-            ) as server:
-                await server.login(self.sender_email, self.app_password)
-                await server.sendmail(self.sender_email, recipient, msg.as_string())
+            # 根据配置选择连接方式
+            if self.use_ssl:
+                # SSL 直连（163/QQ 邮箱使用端口 465）
+                async with aiosmtplib.SMTP_SSL(
+                    hostname=self.smtp_server,
+                    port=self.smtp_port,
+                    context=context
+                ) as server:
+                    await server.login(self.sender_email, self.app_password)
+                    await server.sendmail(self.sender_email, recipient, msg.as_string())
+            else:
+                # STARTTLS（Gmail 使用端口 587）
+                async with aiosmtplib.SMTP(
+                    hostname=self.smtp_server,
+                    port=self.smtp_port
+                ) as server:
+                    await server.starttls(context=context)
+                    await server.login(self.sender_email, self.app_password)
+                    await server.sendmail(self.sender_email, recipient, msg.as_string())
             
             logger.info(f"测试邮件发送成功: {recipient}")
             return True

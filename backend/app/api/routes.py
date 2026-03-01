@@ -184,6 +184,11 @@ async def get_scheduler_info():
 @router.get("/config")
 async def get_config():
     """获取当前配置（敏感信息脱敏）"""
+    # 邮件配置（支持新配置和旧配置）
+    email_sender = settings.email_sender or settings.gmail_sender
+    email_recipient = settings.email_recipient or settings.digest_recipient
+    email_configured = bool((settings.email_sender and settings.email_password) or (settings.gmail_sender and settings.gmail_app_password))
+    
     return {
         "schedule_hour": settings.schedule_hour,
         "schedule_minute": settings.schedule_minute,
@@ -191,13 +196,16 @@ async def get_config():
         "github_top_n": settings.github_top_n,
         "youtube_top_n": settings.youtube_top_n,
         "ai_keywords": settings.ai_keywords,
-        # 脱敏显示
-        "gmail_sender": _mask_email(settings.gmail_sender),
-        "digest_recipient": _mask_email(settings.digest_recipient),
+        # 邮件配置（脱敏显示）
+        "smtp_server": settings.smtp_server,
+        "smtp_port": settings.smtp_port,
+        "email_sender": _mask_email(email_sender),
+        "email_recipient": _mask_email(email_recipient),
+        # 服务状态
         "github_configured": bool(settings.github_token),
         "youtube_configured": bool(settings.youtube_api_key),
         "gemini_configured": bool(settings.gemini_api_key),
-        "email_configured": bool(settings.gmail_sender and settings.gmail_app_password)
+        "email_configured": email_configured
     }
 
 

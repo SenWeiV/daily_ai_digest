@@ -163,7 +163,10 @@ class DigestRecordModel:
             youtube_data = [YouTubeDigestItem(**item) for item in youtube_list]
         
         # 兼容旧数据，如果没有 digest_type 字段则默认为 daily
-        digest_type = row.get('digest_type', 'daily') if hasattr(row, 'keys') else 'daily'
+        try:
+            digest_type = row['digest_type']
+        except (KeyError, IndexError):
+            digest_type = 'daily'
         
         return DigestRecord(
             id=row['id'],

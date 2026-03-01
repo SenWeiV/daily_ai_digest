@@ -27,7 +27,17 @@ class Settings(BaseSettings):
     # YouTube API
     youtube_api_key: str = Field(default="", alias="YOUTUBE_API_KEY")
     
-    # Gmail SMTP
+    # 邮件服务配置（支持 Gmail / 163 / QQ 等）
+    smtp_server: str = Field(default="smtp.163.com", alias="SMTP_SERVER")
+    smtp_port: int = Field(default=465, alias="SMTP_PORT")
+    smtp_use_ssl: bool = Field(default=True, alias="SMTP_USE_SSL")
+    
+    # 发件人邮箱和授权码
+    email_sender: str = Field(default="", alias="EMAIL_SENDER")
+    email_password: str = Field(default="", alias="EMAIL_PASSWORD")
+    email_recipient: str = Field(default="", alias="EMAIL_RECIPIENT")
+    
+    # 保留旧字段兼容（向后兼容）
     gmail_sender: str = Field(default="", alias="GMAIL_SENDER")
     gmail_app_password: str = Field(default="", alias="GMAIL_APP_PASSWORD")
     digest_recipient: str = Field(default="", alias="DIGEST_RECIPIENT")
