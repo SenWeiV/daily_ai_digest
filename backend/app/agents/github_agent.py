@@ -11,6 +11,7 @@ import httpx
 from bs4 import BeautifulSoup
 from github import Github, GithubException
 from github.Repository import Repository
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, before_sleep_log
 
 from app.config import settings
 from app.schemas import GitHubDigestItem
@@ -36,6 +37,17 @@ class GitHubAgent:
         "fine-tune", "training", "inference", "prompt",
         "mcp", "model context protocol"
     ]
+    
+    # 重试配置
+    MAX_RETRIES = 10
+    RETRYABLE_EXCEPTIONS = (
+        httpx.TimeoutException,
+        httpx.ConnectError,
+        httpx.ReadError,
+        httpx.WriteError,
+        httpx.ConnectTimeout,
+        httpx.ReadTimeout,
+    )
     
     def __init__(self):
         """初始化 GitHub 客户端"""
@@ -83,13 +95,112 @@ class GitHubAgent:
         
         return urls
 
+    async def _fetch_single_url(
+        self,
+        url: str,
+        proxy: Optional[str],
+        headers: dict,
+        retry_count: int = 0
+    ) -> tuple[bool, List[Dict[str, Any]], Optional[Exception]]:
+        """
+        单个 URL 请求（带重试逻辑）
+        
+        Args:
+            url: 请求 URL
+            proxy: 代理地址
+            headers: 请求头
+            retry_count: 当前重试次数
+        
+        Returns:
+            (成功标志, 仓库列表, 错误信息)
+        """
+        try:
+            logger.info(f"正在抓取 GitHub Trending: {url} (proxy: {proxy or '无'}, 重试: {retry_count}/{self.MAX_RETRIES})")
+            
+            client_kwargs = {
+                "timeout": 30.0,
+                "follow_redirects": True
+            }
+            if proxy:
+                client_kwargs["proxies"] = proxy
+            
+            async with httpx.AsyncClient(**client_kwargs) as client:
+                response = await client.get(url, headers=headers)
+                response.raise_for_status()
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                repo_list = soup.find_all('article', class_='Box-row')
+                
+                trending_repos = []
+                for article in repo_list:
+                    try:
+                        h2_tag = article.find('h2', class_='h3')
+                        if not h2_tag:
+                            continue
+                        
+                        repo_link = h2_tag.find('a')
+                        if not repo_link:
+                            continue
+                        
+                        repo_full_name = repo_link.get_text(strip=True).replace('\n', '').replace(' ', '')
+                        repo_url = f"https://github.com{repo_link['href']}"
+                        
+                        description_tag = article.find('p', class_='col-9')
+                        description = description_tag.get_text(strip=True) if description_tag else ""
+                        
+                        lang_tag = article.find('span', itemprop='programmingLanguage')
+                        repo_language = lang_tag.get_text(strip=True) if lang_tag else "Unknown"
+                        
+                        stars_tag = article.find('span', class_='d-inline-block float-sm-right')
+                        stars_today = 0
+                        if stars_tag:
+                            stars_text = stars_tag.get_text(strip=True)
+                            try:
+                                stars_today = int(stars_text.split()[0].replace(',', ''))
+                            except (ValueError, IndexError):
+                                pass
+                        
+                        trending_repos.append({
+                            "full_name": repo_full_name,
+                            "url": repo_url,
+                            "description": description,
+                            "language": repo_language,
+                            "stars_today": stars_today,
+                            "time_range": ""
+                        })
+                        
+                    except Exception as e:
+                        logger.warning(f"解析单个仓库失败: {e}")
+                        continue
+                
+                if trending_repos:
+                    logger.info(f"从 {url} 成功获取 {len(trending_repos)} 个仓库")
+                    return True, trending_repos, None
+                else:
+                    return False, [], Exception("未找到仓库")
+                    
+        except self.RETRYABLE_EXCEPTIONS as e:
+            logger.warning(f"网络错误 [{type(e).__name__}]: {url}, 错误: {e}")
+            return False, [], e
+        except httpx.HTTPStatusError as e:
+            # 4xx 错误不重试
+            if 400 <= e.response.status_code < 500:
+                logger.error(f"HTTP 客户端错误 [{e.response.status_code}]: {url}")
+                return False, [], e
+            # 5xx 错误可以重试
+            logger.warning(f"HTTP 服务器错误 [{e.response.status_code}]: {url}")
+            return False, [], e
+        except Exception as e:
+            logger.warning(f"抓取异常: {url}, 错误: {e}")
+            return False, [], e
+
     async def fetch_trending_repos(
         self,
         time_range: Literal["daily", "weekly", "monthly"] = "daily",
         language: str = ""
     ) -> List[Dict[str, Any]]:
         """
-        从 GitHub Trending 页面抓取热门仓库（支持代理和镜像 fallback）
+        从 GitHub Trending 页面抓取热门仓库（支持代理和镜像 fallback，每个 URL 最多重试 10 次）
         
         Args:
             time_range: 时间范围 - daily(今日), weekly(本周), monthly(本月)
@@ -98,7 +209,6 @@ class GitHubAgent:
         Returns:
             包含仓库基本信息的字典列表
         """
-        # 获取 fallback URL 列表
         urls_to_try = self._build_fallback_urls(time_range, language)
         
         headers = {
@@ -110,89 +220,35 @@ class GitHubAgent:
             "Connection": "keep-alive",
         }
         
-        trending_repos = []
         last_error = None
         
         for url, proxy in urls_to_try:
-            try:
-                logger.info(f"正在抓取 GitHub Trending: {url} (proxy: {proxy or '无'})")
+            # 每个 URL 最多重试 10 次
+            for retry_count in range(self.MAX_RETRIES):
+                success, repos, error = await self._fetch_single_url(url, proxy, headers, retry_count)
                 
-                client_kwargs = {
-                    "timeout": 30.0,
-                    "follow_redirects": True
-                }
-                if proxy:
-                    client_kwargs["proxies"] = proxy
+                if success and repos:
+                    # 更新 time_range
+                    for repo in repos:
+                        repo["time_range"] = time_range
+                    return repos
                 
-                async with httpx.AsyncClient(**client_kwargs) as client:
-                    response = await client.get(url, headers=headers)
-                    response.raise_for_status()
-                    
-                    soup = BeautifulSoup(response.text, 'html.parser')
-                    
-                    # 查找所有 trending 仓库条目
-                    repo_list = soup.find_all('article', class_='Box-row')
-                    
-                    for article in repo_list:
-                        try:
-                            # 提取仓库名称
-                            h2_tag = article.find('h2', class_='h3')
-                            if not h2_tag:
-                                continue
-                            
-                            repo_link = h2_tag.find('a')
-                            if not repo_link:
-                                continue
-                            
-                            repo_full_name = repo_link.get_text(strip=True).replace('\n', '').replace(' ', '')
-                            repo_url = f"https://github.com{repo_link['href']}"
-                            
-                            # 提取描述
-                            description_tag = article.find('p', class_='col-9')
-                            description = description_tag.get_text(strip=True) if description_tag else ""
-                            
-                            # 提取编程语言
-                            lang_tag = article.find('span', itemprop='programmingLanguage')
-                            repo_language = lang_tag.get_text(strip=True) if lang_tag else "Unknown"
-                            
-                            # 提取 stars 增长数
-                            stars_tag = article.find('span', class_='d-inline-block float-sm-right')
-                            stars_today = 0
-                            if stars_tag:
-                                stars_text = stars_tag.get_text(strip=True)
-                                try:
-                                    stars_today = int(stars_text.split()[0].replace(',', ''))
-                                except (ValueError, IndexError):
-                                    pass
-                            
-                            trending_repos.append({
-                                "full_name": repo_full_name,
-                                "url": repo_url,
-                                "description": description,
-                                "language": repo_language,
-                                "stars_today": stars_today,
-                                "time_range": time_range
-                            })
-                            
-                        except Exception as e:
-                            logger.warning(f"解析单个仓库失败: {e}")
-                            continue
-                    
-                    if trending_repos:
-                        logger.info(f"从 {url} 成功获取 {len(trending_repos)} 个仓库")
-                        return trending_repos
-                    else:
-                        logger.warning(f"从 {url} 未找到仓库，尝试下一个数据源")
-                        
-            except httpx.HTTPError as e:
-                last_error = e
-                logger.warning(f"请求失败: {url}, 错误: {e}")
-            except Exception as e:
-                last_error = e
-                logger.warning(f"抓取异常: {url}, 错误: {e}")
+                last_error = error
+                
+                # 判断是否应该重试
+                if error and isinstance(error, httpx.HTTPStatusError):
+                    if 400 <= error.response.status_code < 500:
+                        # 4xx 错误不重试，直接尝试下一个 URL
+                        break
+                
+                # 指数退避等待
+                if retry_count < self.MAX_RETRIES - 1:
+                    wait_time = min(2 ** retry_count, 60)  # 最大 60 秒
+                    logger.info(f"等待 {wait_time} 秒后重试...")
+                    await asyncio.sleep(wait_time)
         
         logger.error(f"所有访问方式均失败，最后错误: {last_error}")
-        return trending_repos
+        return []
     
     def is_ai_related(self, repo_info: Dict[str, Any]) -> bool:
         """
