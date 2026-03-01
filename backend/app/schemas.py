@@ -98,6 +98,7 @@ class ExecutionLog(BaseModel):
     youtube_count: int = Field(default=0, description="YouTube结果数")
     error_message: Optional[str] = Field(default=None, description="错误信息")
     duration_seconds: Optional[float] = Field(default=None, description="执行耗时(秒)")
+    digest_type: str = Field(default="daily", description="摘要类型: daily/weekly/monthly")
     created_at: Optional[datetime] = None
 
 
@@ -152,6 +153,7 @@ class TriggerRequest(BaseModel):
     """手动触发请求"""
     force: bool = Field(default=False, description="是否强制重新生成（即使今天已有数据）")
     send_email: bool = Field(default=True, description="是否发送邮件")
+    digest_type: str = Field(default="daily", description="摘要类型: daily/weekly/monthly")
 
 
 class TriggerResponse(BaseModel):

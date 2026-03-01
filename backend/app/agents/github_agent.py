@@ -51,8 +51,12 @@ class GitHubAgent:
     
     @property
     def is_available(self) -> bool:
-        """检查 GitHub 客户端是否可用"""
-        return self.client is not None
+        """检查 GitHub Agent 是否可用
+        
+        Trending 页面抓取不需要 Token，始终可用
+        API 详情获取需要 Token，但不是必需的
+        """
+        return True  # Trending 页面抓取始终可用
     
     async def fetch_trending_repos(
         self,
@@ -353,25 +357,38 @@ class GitHubAgent:
         
         for repo_info in ai_repos[:self.top_n]:
             try:
-                # 使用API获取完整仓库信息
+                # 使用API获取完整仓库信息（如果有Token）
                 repo = await self.get_repo_details_from_api(repo_info["full_name"])
                 
-                if not repo:
-                    logger.warning(f"无法获取仓库详情: {repo_info['full_name']}")
-                    continue
+                if repo:
+                    # 有API详情时进行完整分析
+                    details = await self.fetch_repo_details(repo)
+                    item = await self.analyze_repo(
+                        repo, 
+                        details, 
+                        stars_today=repo_info.get("stars_today", 0)
+                    )
+                else:
+                    # 无API时使用Trending页面数据创建基础项
+                    logger.info(f"使用基础数据: {repo_info['full_name']}")
+                    item = GitHubDigestItem(
+                        repo_name=repo_info["full_name"],
+                        repo_url=repo_info["url"],
+                        stars=0,  # 无法获取总star数
+                        stars_today=repo_info.get("stars_today", 0),
+                        forks=0,
+                        description=repo_info.get("description", ""),
+                        main_language=repo_info.get("language", "Unknown"),
+                        topics=[],
+                        summary=truncate_text(repo_info.get("description", "无描述"), 200)
+                    )
                 
-                # 获取详情
-                details = await self.fetch_repo_details(repo)
-                
-                # 分析
-                item = await self.analyze_repo(
-                    repo, 
-                    details, 
-                    stars_today=repo_info.get("stars_today", 0)
-                )
                 results.append(item)
                 
-                logger.info(f"完成分析: {repo.full_name} ⭐{repo.stargazers_count} (+{item.stars_today})")
+                if repo:
+                    logger.info(f"完成分析: {repo.full_name} ⭐{repo.stargazers_count} (+{item.stars_today})")
+                else:
+                    logger.info(f"完成基础数据: {item.repo_name} (+{item.stars_today})")
                 
                 # 避免API限流
                 await asyncio.sleep(1)

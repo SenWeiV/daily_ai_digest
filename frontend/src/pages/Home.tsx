@@ -12,6 +12,15 @@ import type {
   YouTubeDigestItem,
 } from "../types";
 
+// 摘要类型选项
+const DIGEST_TYPE_OPTIONS = [
+  { value: "daily", label: "每日", description: "今日热点" },
+  { value: "weekly", label: "每周", description: "本周精选" },
+  { value: "monthly", label: "每月", description: "本月热门" },
+] as const;
+
+type DigestType = "daily" | "weekly" | "monthly";
+
 function Home() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [digest, setDigest] = useState<DigestRecord | null>(null);
@@ -24,6 +33,7 @@ function Home() {
     "github",
   );
   const [activeTab, setActiveTab] = useState<"github" | "youtube">("github");
+  const [digestType, setDigestType] = useState<DigestType>("daily");
 
   // 加载数据
   const loadData = async () => {
@@ -55,9 +65,11 @@ function Home() {
       const response = await digestApi.trigger({
         force: false,
         send_email: true,
+        digest_type: digestType,
       });
       if (response.success) {
-        alert("摘要生成任务已启动，请稍后刷新查看结果");
+        const typeLabel = DIGEST_TYPE_OPTIONS.find(o => o.value === digestType)?.label || "";
+        alert(`${typeLabel}摘要生成任务已启动，请稍后刷新查看结果`);
       } else {
         alert(response.message);
       }
@@ -94,7 +106,23 @@ function Home() {
               : "暂无数据"}
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* 摘要类型选择器 */}
+          <div className="flex gap-1 bg-neutral-900/40 border border-neutral-800 rounded-full p-1">
+            {DIGEST_TYPE_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                onClick={() => setDigestType(option.value)}
+                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                  digestType === option.value
+                    ? "bg-violet-600 text-white"
+                    : "text-neutral-400 hover:text-white"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
           <button
             onClick={loadData}
             className="inline-flex items-center px-4 py-2 rounded-full border border-neutral-800 text-neutral-200 hover:bg-neutral-900/40 transition-colors"
@@ -112,7 +140,7 @@ function Home() {
             <Calendar
               className={`w-4 h-4 mr-2 ${triggering ? "animate-spin" : ""}`}
             />
-            {triggering ? "生成中..." : "立即生成"}
+            {triggering ? "生成中..." : `生成${DIGEST_TYPE_OPTIONS.find(o => o.value === digestType)?.label || ""}摘要`}
           </button>
         </div>
       </div>

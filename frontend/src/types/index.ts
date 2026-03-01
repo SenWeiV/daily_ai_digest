@@ -47,6 +47,7 @@ export interface YouTubeDigestItem {
 export interface DigestRecord {
   id: number | null;
   digest_date: string;
+  digest_type: string; // daily/weekly/monthly
   github_data: GitHubDigestItem[];
   youtube_data: YouTubeDigestItem[];
   email_sent: boolean;
@@ -118,6 +119,7 @@ export interface ApiResponse<T = unknown> {
 export interface TriggerRequest {
   force: boolean;
   send_email: boolean;
+  digest_type?: string; // daily/weekly/monthly，默认 daily
 }
 
 // 触发响应
