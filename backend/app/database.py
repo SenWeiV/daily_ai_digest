@@ -95,6 +95,57 @@ async def _run_migrations(db: aiosqlite.Connection):
         await db.execute("ALTER TABLE digest_records ADD COLUMN digest_type TEXT DEFAULT 'daily'")
         await db.commit()
         print("数据库迁移: 添加 digest_records.digest_type 列")
+    
+    # 确保 digest_records 表有正确的 UNIQUE 约束
+    await _ensure_unique_constraint(db)
+
+
+async def _ensure_unique_constraint(db: aiosqlite.Connection):
+    """确保 digest_records 表有正确的 UNIQUE(digest_date, digest_type) 约束"""
+    # 检查现有表结构
+    cursor = await db.execute("""
+        SELECT sql FROM sqlite_master 
+        WHERE type='table' AND name='digest_records'
+    """)
+    row = await cursor.fetchone()
+    
+    if row and 'UNIQUE(digest_date, digest_type)' in row[0]:
+        return  # 约束正确，无需修改
+    
+    print("数据库迁移: 重建 digest_records 表以添加正确的 UNIQUE 约束...")
+    
+    # 重建表
+    await db.executescript("""
+        -- 创建带正确约束的新表
+        CREATE TABLE IF NOT EXISTS digest_records_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            digest_date DATE NOT NULL,
+            digest_type TEXT DEFAULT 'daily' NOT NULL,
+            github_data TEXT,
+            youtube_data TEXT,
+            email_sent INTEGER DEFAULT 0,
+            email_sent_at TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(digest_date, digest_type)
+        );
+        
+        -- 复制数据（如果旧表存在数据）
+        INSERT OR IGNORE INTO digest_records_new 
+        SELECT id, digest_date, digest_type, github_data, youtube_data, email_sent, email_sent_at, created_at, updated_at
+        FROM digest_records;
+        
+        -- 删除旧表
+        DROP TABLE digest_records;
+        
+        -- 重命名新表
+        ALTER TABLE digest_records_new RENAME TO digest_records;
+        
+        -- 重建索引
+        CREATE INDEX IF NOT EXISTS idx_digest_date ON digest_records(digest_date);
+    """)
+    await db.commit()
+    print("数据库迁移: digest_records 表重建完成")
 
 
 @asynccontextmanager
