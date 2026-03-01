@@ -306,10 +306,11 @@ class EmailService:
             # 根据配置选择连接方式
             if self.use_ssl:
                 # SSL 直连（163/QQ 邮箱使用端口 465）
-                async with aiosmtplib.SMTP_SSL(
+                async with aiosmtplib.SMTP(
                     hostname=self.smtp_server,
                     port=self.smtp_port,
-                    context=context
+                    use_tls=True,
+                    tls_context=context
                 ) as server:
                     await server.login(self.sender_email, self.app_password)
                     await server.sendmail(self.sender_email, recipient, msg.as_string())
@@ -317,7 +318,8 @@ class EmailService:
                 # STARTTLS（Gmail 使用端口 587）
                 async with aiosmtplib.SMTP(
                     hostname=self.smtp_server,
-                    port=self.smtp_port
+                    port=self.smtp_port,
+                    use_tls=False
                 ) as server:
                     await server.starttls(context=context)
                     await server.login(self.sender_email, self.app_password)
@@ -374,10 +376,11 @@ class EmailService:
             # 根据配置选择连接方式
             if self.use_ssl:
                 # SSL 直连（163/QQ 邮箱使用端口 465）
-                async with aiosmtplib.SMTP_SSL(
+                async with aiosmtplib.SMTP(
                     hostname=self.smtp_server,
                     port=self.smtp_port,
-                    context=context
+                    use_tls=True,
+                    tls_context=context
                 ) as server:
                     await server.login(self.sender_email, self.app_password)
                     await server.sendmail(self.sender_email, recipient, msg.as_string())
@@ -385,7 +388,8 @@ class EmailService:
                 # STARTTLS（Gmail 使用端口 587）
                 async with aiosmtplib.SMTP(
                     hostname=self.smtp_server,
-                    port=self.smtp_port
+                    port=self.smtp_port,
+                    use_tls=False
                 ) as server:
                     await server.starttls(context=context)
                     await server.login(self.sender_email, self.app_password)
