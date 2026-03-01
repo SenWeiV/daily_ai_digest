@@ -25,13 +25,15 @@ INIT_SQL = """
 -- 每日摘要记录表
 CREATE TABLE IF NOT EXISTS digest_records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    digest_date DATE UNIQUE NOT NULL,
+    digest_date DATE NOT NULL,
+    digest_type TEXT DEFAULT 'daily' NOT NULL,
     github_data TEXT,
     youtube_data TEXT,
     email_sent INTEGER DEFAULT 0,
     email_sent_at TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(digest_date, digest_type)
 );
 
 -- 配置表
@@ -51,6 +53,7 @@ CREATE TABLE IF NOT EXISTS execution_logs (
     youtube_count INTEGER DEFAULT 0,
     error_message TEXT,
     duration_seconds REAL,
+    digest_type TEXT DEFAULT 'daily',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -22,12 +22,11 @@ class DigestRecordModel:
     """摘要记录数据库操作"""
     
     @staticmethod
-    async def create(db: aiosqlite.Connection, record: DigestRecord) -> int:
-        """创建新的摘要记录"""
+    async def create_with_type(db: aiosqlite.Connection, record: DigestRecord) -> int:
+        """创建新的摘要记录（支持 digest_type）"""
         github_json = json.dumps([item.model_dump() for item in record.github_data], ensure_ascii=False)
         youtube_json = json.dumps([item.model_dump() for item in record.youtube_data], ensure_ascii=False)
         
-        # 使用 digest_type 和 digest_date 作为联合唯一键
         digest_type = getattr(record, 'digest_type', 'daily')
         
         cursor = await db.execute(
@@ -50,6 +49,11 @@ class DigestRecordModel:
         )
         await db.commit()
         return cursor.lastrowid
+    
+    @staticmethod
+    async def create(db: aiosqlite.Connection, record: DigestRecord) -> int:
+        """创建新的摘要记录（向后兼容）"""
+        return await DigestRecordModel.create_with_type(db, record)
     
     @staticmethod
     async def get_by_date(db: aiosqlite.Connection, digest_date: date, digest_type: str = "daily") -> Optional[DigestRecord]:
@@ -88,14 +92,25 @@ class DigestRecordModel:
         offset: int = 0
     ) -> List[DigestRecordBrief]:
         """获取历史摘要列表"""
+        return await DigestRecordModel.get_history_by_type(db, "daily", limit, offset)
+    
+    @staticmethod
+    async def get_history_by_type(
+        db: aiosqlite.Connection,
+        digest_type: str = "daily",
+        limit: int = 30, 
+        offset: int = 0
+    ) -> List[DigestRecordBrief]:
+        """根据类型获取历史摘要列表"""
         cursor = await db.execute(
             """
             SELECT id, digest_date, github_data, youtube_data, email_sent, created_at
             FROM digest_records 
+            WHERE digest_type = ?
             ORDER BY digest_date DESC 
             LIMIT ? OFFSET ?
             """,
-            (limit, offset)
+            (digest_type, limit, offset)
         )
         rows = await cursor.fetchall()
         
@@ -119,6 +134,7 @@ class DigestRecordModel:
     async def update_email_status(
         db: aiosqlite.Connection, 
         digest_date: date, 
+        digest_type: str = "daily",
         sent: bool = True
     ):
         """更新邮件发送状态"""
@@ -126,9 +142,9 @@ class DigestRecordModel:
             """
             UPDATE digest_records 
             SET email_sent = ?, email_sent_at = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE digest_date = ?
+            WHERE digest_date = ? AND digest_type = ?
             """,
-            (1 if sent else 0, datetime.now().isoformat(), digest_date.isoformat())
+            (1 if sent else 0, datetime.now().isoformat(), digest_date.isoformat(), digest_type)
         )
         await db.commit()
     
@@ -146,9 +162,13 @@ class DigestRecordModel:
             youtube_list = json.loads(row['youtube_data'])
             youtube_data = [YouTubeDigestItem(**item) for item in youtube_list]
         
+        # 兼容旧数据，如果没有 digest_type 字段则默认为 daily
+        digest_type = row.get('digest_type', 'daily') if hasattr(row, 'keys') else 'daily'
+        
         return DigestRecord(
             id=row['id'],
             digest_date=date.fromisoformat(row['digest_date']),
+            digest_type=digest_type,
             github_data=github_data,
             youtube_data=youtube_data,
             email_sent=bool(row['email_sent']),
@@ -167,8 +187,8 @@ class ExecutionLogModel:
         cursor = await db.execute(
             """
             INSERT INTO execution_logs 
-            (execution_time, status, github_count, youtube_count, error_message, duration_seconds)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (execution_time, status, github_count, youtube_count, error_message, duration_seconds, digest_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 log.execution_time.isoformat(),
@@ -176,7 +196,8 @@ class ExecutionLogModel:
                 log.github_count,
                 log.youtube_count,
                 log.error_message,
-                log.duration_seconds
+                log.duration_seconds,
+                log.digest_type
             )
         )
         await db.commit()

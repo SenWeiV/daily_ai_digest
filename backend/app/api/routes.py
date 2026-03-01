@@ -56,15 +56,17 @@ async def get_latest_digest():
 @router.get("/digest/history")
 async def get_digest_history(
     limit: int = Query(default=30, ge=1, le=100),
-    offset: int = Query(default=0, ge=0)
+    offset: int = Query(default=0, ge=0),
+    digest_type: str = Query(default="daily", description="摘要类型: daily/weekly/monthly")
 ):
     """获取历史摘要列表"""
-    records = await digest_service.get_history(limit, offset)
+    records = await digest_service.get_history(limit, offset, digest_type)
     return {
         "items": records,
         "total": len(records),
         "limit": limit,
-        "offset": offset
+        "offset": offset,
+        "digest_type": digest_type
     }
 
 
@@ -96,19 +98,29 @@ async def trigger_digest(
             digest_date=date.today()
         )
     
+    # 验证 digest_type
+    if request.digest_type not in ["daily", "weekly", "monthly"]:
+        return TriggerResponse(
+            success=False,
+            message="digest_type 必须是 daily、weekly 或 monthly 之一",
+            digest_date=date.today()
+        )
+    
     # 在后台执行
     async def run_digest():
         await scheduler_service.trigger_now(
+            job_type=request.digest_type,
             send_email=request.send_email,
             force=request.force
         )
     
     background_tasks.add_task(run_digest)
     
+    type_label = {"daily": "每日", "weekly": "每周", "monthly": "每月"}[request.digest_type]
     return TriggerResponse(
         success=True,
-        message="摘要生成任务已启动，请稍后查看结果",
-        task_id=f"digest_{date.today().isoformat()}",
+        message=f"{type_label}摘要生成任务已启动，请稍后查看结果",
+        task_id=f"digest_{request.digest_type}_{date.today().isoformat()}",
         digest_date=date.today()
     )
 

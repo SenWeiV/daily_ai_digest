@@ -62,9 +62,9 @@ export const digestApi = {
   },
 
   // 获取历史记录
-  getHistory: async (limit = 30, offset = 0): Promise<HistoryResponse> => {
+  getHistory: async (limit = 30, offset = 0, digestType = "daily"): Promise<HistoryResponse> => {
     const response = await api.get<HistoryResponse>("/digest/history", {
-      params: { limit, offset },
+      params: { limit, offset, digest_type: digestType },
     });
     return response.data;
   },
