@@ -26,7 +26,14 @@ services:
       # YouTube API
       - YOUTUBE_API_KEY=${YOUTUBE_API_KEY:-}
       
-      # Gmail SMTP
+      # 邮件服务配置（支持 Gmail / 163 / QQ 等）
+      - SMTP_SERVER=${SMTP_SERVER:-smtp.163.com}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_USE_SSL=${SMTP_USE_SSL:-true}
+      - EMAIL_SENDER=${EMAIL_SENDER:-}
+      - EMAIL_PASSWORD=${EMAIL_PASSWORD:-}
+      - EMAIL_RECIPIENT=${EMAIL_RECIPIENT:-}
+      # 保留旧配置兼容
       - GMAIL_SENDER=${GMAIL_SENDER:-}
       - GMAIL_APP_PASSWORD=${GMAIL_APP_PASSWORD:-}
       - DIGEST_RECIPIENT=${DIGEST_RECIPIENT:-}
