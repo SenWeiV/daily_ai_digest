@@ -58,13 +58,38 @@ class GitHubAgent:
         """
         return True  # Trending 页面抓取始终可用
     
+    def _build_fallback_urls(self, time_range: str, language: str = "") -> List[tuple]:
+        """
+        构建 fallback URL 列表，优先级: 直连 > 代理 > 镜像
+        
+        Returns:
+            [(url, proxy_config), ...] 列表
+        """
+        urls = []
+        path = f"/{language}" if language else ""
+        trending_path = f"/trending{path}?since={time_range}"
+        
+        # 1. 直连 (最高优先级，某些云服务器可能可访问)
+        urls.append((f"https://github.com{trending_path}", None))
+        
+        # 2. 代理访问
+        if settings.github_proxy:
+            urls.append((f"https://github.com{trending_path}", settings.github_proxy))
+        
+        # 3. 镜像站点
+        if settings.github_mirror:
+            mirror_url = settings.github_mirror.rstrip('/')
+            urls.append((f"{mirror_url}/https://github.com{trending_path}", None))
+        
+        return urls
+
     async def fetch_trending_repos(
         self,
         time_range: Literal["daily", "weekly", "monthly"] = "daily",
         language: str = ""
     ) -> List[Dict[str, Any]]:
         """
-        从 GitHub Trending 页面抓取热门仓库
+        从 GitHub Trending 页面抓取热门仓库（支持代理和镜像 fallback）
         
         Args:
             time_range: 时间范围 - daily(今日), weekly(本周), monthly(本月)
@@ -73,13 +98,8 @@ class GitHubAgent:
         Returns:
             包含仓库基本信息的字典列表
         """
-        # 构建URL
-        url = f"{self.TRENDING_URL}"
-        if language:
-            url += f"/{language}"
-        url += f"?since={time_range}"
-        
-        logger.info(f"正在抓取 GitHub Trending: {url}")
+        # 获取 fallback URL 列表
+        urls_to_try = self._build_fallback_urls(time_range, language)
         
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -91,70 +111,87 @@ class GitHubAgent:
         }
         
         trending_repos = []
+        last_error = None
         
-        try:
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                response = await client.get(url, headers=headers)
-                response.raise_for_status()
+        for url, proxy in urls_to_try:
+            try:
+                logger.info(f"正在抓取 GitHub Trending: {url} (proxy: {proxy or '无'})")
                 
-                soup = BeautifulSoup(response.text, 'html.parser')
+                client_kwargs = {
+                    "timeout": 30.0,
+                    "follow_redirects": True
+                }
+                if proxy:
+                    client_kwargs["proxies"] = proxy
                 
-                # 查找所有 trending 仓库条目
-                repo_list = soup.find_all('article', class_='Box-row')
-                
-                for article in repo_list:
-                    try:
-                        # 提取仓库名称
-                        h2_tag = article.find('h2', class_='h3')
-                        if not h2_tag:
+                async with httpx.AsyncClient(**client_kwargs) as client:
+                    response = await client.get(url, headers=headers)
+                    response.raise_for_status()
+                    
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    
+                    # 查找所有 trending 仓库条目
+                    repo_list = soup.find_all('article', class_='Box-row')
+                    
+                    for article in repo_list:
+                        try:
+                            # 提取仓库名称
+                            h2_tag = article.find('h2', class_='h3')
+                            if not h2_tag:
+                                continue
+                            
+                            repo_link = h2_tag.find('a')
+                            if not repo_link:
+                                continue
+                            
+                            repo_full_name = repo_link.get_text(strip=True).replace('\n', '').replace(' ', '')
+                            repo_url = f"https://github.com{repo_link['href']}"
+                            
+                            # 提取描述
+                            description_tag = article.find('p', class_='col-9')
+                            description = description_tag.get_text(strip=True) if description_tag else ""
+                            
+                            # 提取编程语言
+                            lang_tag = article.find('span', itemprop='programmingLanguage')
+                            repo_language = lang_tag.get_text(strip=True) if lang_tag else "Unknown"
+                            
+                            # 提取 stars 增长数
+                            stars_tag = article.find('span', class_='d-inline-block float-sm-right')
+                            stars_today = 0
+                            if stars_tag:
+                                stars_text = stars_tag.get_text(strip=True)
+                                try:
+                                    stars_today = int(stars_text.split()[0].replace(',', ''))
+                                except (ValueError, IndexError):
+                                    pass
+                            
+                            trending_repos.append({
+                                "full_name": repo_full_name,
+                                "url": repo_url,
+                                "description": description,
+                                "language": repo_language,
+                                "stars_today": stars_today,
+                                "time_range": time_range
+                            })
+                            
+                        except Exception as e:
+                            logger.warning(f"解析单个仓库失败: {e}")
                             continue
+                    
+                    if trending_repos:
+                        logger.info(f"从 {url} 成功获取 {len(trending_repos)} 个仓库")
+                        return trending_repos
+                    else:
+                        logger.warning(f"从 {url} 未找到仓库，尝试下一个数据源")
                         
-                        repo_link = h2_tag.find('a')
-                        if not repo_link:
-                            continue
-                        
-                        repo_full_name = repo_link.get_text(strip=True).replace('\n', '').replace(' ', '')
-                        repo_url = f"https://github.com{repo_link['href']}"
-                        
-                        # 提取描述
-                        description_tag = article.find('p', class_='col-9')
-                        description = description_tag.get_text(strip=True) if description_tag else ""
-                        
-                        # 提取编程语言
-                        lang_tag = article.find('span', itemprop='programmingLanguage')
-                        language = lang_tag.get_text(strip=True) if lang_tag else "Unknown"
-                        
-                        # 提取 stars 增长数
-                        stars_tag = article.find('span', class_='d-inline-block float-sm-right')
-                        stars_today = 0
-                        if stars_tag:
-                            stars_text = stars_tag.get_text(strip=True)
-                            # 解析 "XXX stars today/week/month"
-                            try:
-                                stars_today = int(stars_text.split()[0].replace(',', ''))
-                            except (ValueError, IndexError):
-                                pass
-                        
-                        trending_repos.append({
-                            "full_name": repo_full_name,
-                            "url": repo_url,
-                            "description": description,
-                            "language": language,
-                            "stars_today": stars_today,
-                            "time_range": time_range
-                        })
-                        
-                    except Exception as e:
-                        logger.warning(f"解析单个仓库失败: {e}")
-                        continue
-                
-                logger.info(f"从 Trending 页面找到 {len(trending_repos)} 个仓库")
-                
-        except httpx.HTTPError as e:
-            logger.error(f"请求 GitHub Trending 失败: {e}")
-        except Exception as e:
-            logger.error(f"抓取 Trending 页面异常: {e}")
+            except httpx.HTTPError as e:
+                last_error = e
+                logger.warning(f"请求失败: {url}, 错误: {e}")
+            except Exception as e:
+                last_error = e
+                logger.warning(f"抓取异常: {url}, 错误: {e}")
         
+        logger.error(f"所有访问方式均失败，最后错误: {last_error}")
         return trending_repos
     
     def is_ai_related(self, repo_info: Dict[str, Any]) -> bool:

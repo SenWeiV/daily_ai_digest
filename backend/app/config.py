@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     # GitHub API
     github_token: str = Field(default="", alias="GITHUB_TOKEN")
     
+    # GitHub 访问配置 (用于解决国内服务器无法访问 GitHub 的问题)
+    github_proxy: str = Field(default="", alias="GITHUB_PROXY", description="代理地址，如 http://127.0.0.1:7890")
+    github_mirror: str = Field(default="", alias="GITHUB_MIRROR", description="镜像地址，如 https://ghproxy.com")
+    
     # YouTube API
     youtube_api_key: str = Field(default="", alias="YOUTUBE_API_KEY")
     
