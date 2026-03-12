@@ -10,8 +10,8 @@
 ## 🌐 线上部署
 
 - **前端**: https://senweiv.github.io/daily_ai_digest/
-- **后端 API**: ${DIGEST_PUBLIC_API_ORIGIN}
-- **API 文档**: ${DIGEST_API_DOCS_URL}
+- **后端 API**: 通过 `VITE_API_BASE_URL` 指向你的部署地址
+- **API 文档**: `http://<your-server-host>:8000/docs`
 
 ## ✨ 功能特性
 
@@ -76,7 +76,9 @@
 在仓库 `Settings → Secrets and variables → Actions → Variables` 新增：
 
 - `VITE_API_BASE_URL`：后端 API 根路径（包含 `/api`）
-  - 示例：`${VITE_API_BASE_URL}`
+  - 示例：`https://your-api-host.example/api`
+
+如需在本地保存部署相关变量，可复制仓库根目录的 `.env.local.example` 为 `.env.local`。
 
 设置变量后，重新跑一次 Actions（Re-run jobs）即可让前端构建时带上该变量。
 
@@ -196,18 +198,18 @@ bash ./stop.sh
 
 ```env
 # Kimi 配置示例
-GEMINI_API_KEY=sk-xxx
+GEMINI_API_KEY=<your-kimi-api-key>
 GEMINI_BASE_URL=https://api.moonshot.cn/v1
 GEMINI_MODEL=moonshot-v1-8k
 
 # DeepSeek 配置示例
-GEMINI_API_KEY=sk-xxx
+GEMINI_API_KEY=<your-deepseek-api-key>
 GEMINI_BASE_URL=https://api.deepseek.com/v1
 GEMINI_MODEL=deepseek-chat
 
 # 私有部署/代理地址示例
-GEMINI_API_KEY=sk-xxx
-GEMINI_BASE_URL=${GEMINI_BASE_URL}
+GEMINI_API_KEY=<your-private-api-key>
+GEMINI_BASE_URL=http://<your-private-gateway>:<port>
 GEMINI_MODEL=kimi-k2.5
 ```
 
@@ -336,12 +338,12 @@ daily_ai_digest/
 
 ```env
 # Kimi API 示例（推荐）
-GEMINI_API_KEY=sk-xxx
+GEMINI_API_KEY=<your-kimi-api-key>
 GEMINI_BASE_URL=https://api.moonshot.cn/v1
 GEMINI_MODEL=moonshot-v1-8k
 
 # DeepSeek API 示例
-GEMINI_API_KEY=sk-xxx
+GEMINI_API_KEY=<your-deepseek-api-key>
 GEMINI_BASE_URL=https://api.deepseek.com/v1
 GEMINI_MODEL=deepseek-chat
 ```

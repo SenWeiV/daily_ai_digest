@@ -21,19 +21,29 @@ news_from_github_youtube/
 
 ## 🚀 快速开始
 
+如需在本地保留部署变量，可复制仓库根目录的 `.env.local.example` 为 `.env.local`，然后在执行命令前加载：
+
+```bash
+set -a
+source .env.local
+set +a
+```
+
 ### 1. 上传代码到云服务器
 
 将 `news_from_github_youtube` 目录上传到云服务器的 `/opt/` 目录：
 
 ```bash
 # 在本地执行，将代码上传到服务器
-scp -r news_from_github_youtube ${DIGEST_DEPLOY_SSH_USER}@${DIGEST_DEPLOY_SSH_HOST}:/opt/
+scp -P "${DIGEST_DEPLOY_SSH_PORT:-22}" -r news_from_github_youtube \
+  "${DIGEST_DEPLOY_SSH_USER}@${DIGEST_DEPLOY_SSH_HOST}:/opt/"
 ```
 
 ### 2. 登录服务器并进入目录
 
 ```bash
-ssh ${DIGEST_DEPLOY_SSH_USER}@${DIGEST_DEPLOY_SSH_HOST}
+ssh -p "${DIGEST_DEPLOY_SSH_PORT:-22}" \
+  "${DIGEST_DEPLOY_SSH_USER}@${DIGEST_DEPLOY_SSH_HOST}"
 cd /opt/news_from_github_youtube
 ```
 
@@ -53,12 +63,12 @@ nano .env
 
 ```env
 # LLM API 配置（推荐 Kimi，国内直连）
-GEMINI_API_KEY=sk-your-kimi-api-key
+GEMINI_API_KEY=<your-kimi-api-key>
 GEMINI_BASE_URL=https://api.moonshot.cn/v1
 GEMINI_MODEL=moonshot-v1-8k
 
 # GitHub Token
-GITHUB_TOKEN=ghp_your_github_token
+GITHUB_TOKEN=<your-github-token>
 
 # Gmail SMTP（用于发送邮件摘要）
 GMAIL_SENDER=your_email@gmail.com
@@ -90,8 +100,8 @@ DIGEST_RECIPIENT=your_email@gmail.com
 ```
 
 访问以下地址验证：
-- 健康检查：`${DIGEST_HEALTHCHECK_URL}`
-- API 文档：`${DIGEST_API_DOCS_URL}`
+- 健康检查：`http://<your-server-host>:8000/health`
+- API 文档：`http://<your-server-host>:8000/docs`
 
 ## 📋 常用命令
 

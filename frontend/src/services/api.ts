@@ -18,7 +18,7 @@ import type {
 
 // GitHub Pages 场景：前端与后端不在同域，生产环境建议配置 VITE_API_BASE_URL
 // - 本地开发：默认 '/api'，由 Vite proxy 转发到 http://localhost:8000
-// - 线上部署：例如 '${VITE_API_BASE_URL}'
+// - 线上部署：例如 'https://your-api-host.example/api'
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "/api";
 
 // 创建 axios 实例

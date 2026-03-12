@@ -4,7 +4,7 @@
 
 ---
 
-## 0. 最新进展（2026-02-28 / 服务器：${DIGEST_DEPLOY_SSH_HOST}）
+## 0. 最新进展（2026-02-28 / 服务器：`<your-server-host>`）
 
 ### 0.1 当前部署状态
 
@@ -12,11 +12,11 @@
   - 服务目录：`/opt/daily_ai_digest/backend`
   - 环境变量：`/opt/daily_ai_digest/backend/.env`
   - systemd 常驻服务：`daily-ai-digest.service`（已 enable + running）
-  - 健康检查：`curl ${DIGEST_HEALTHCHECK_URL}` → `200 OK`
+  - 健康检查：`curl http://<your-server-host>:8000/health` → `200 OK`
 
 - [x] 前端已部署到 GitHub Pages
   - 页面：`https://senweiv.github.io/daily_ai_digest/`
-  - 通过 Actions 变量注入：`VITE_API_BASE_URL=${VITE_API_BASE_URL}`
+  - 通过 Actions 变量注入：`VITE_API_BASE_URL=https://your-api-host.example/api`
 
 - [x] 代码已支持国内大模型 API（Kimi/DeepSeek/通义千问等）
   - 新增 `smoke_test.py` 用于 API 连通性测试
@@ -26,16 +26,16 @@
 
 **问题现象：**
 ```
-✅ API Key 已配置: <redacted-api-key>
+✅ API Key 已配置: <redacted>
 ✅ Base URL: ${GEMINI_BASE_URL}
 ✅ Model: kimi-k2.5
 ❌ LLM API 网络不可达
 ```
 
 **问题诊断：**
-- 配置的 LLM API 地址 `${GEMINI_BASE_URL}` 是百度千帆内网地址
-- 服务器 IP: `${DIGEST_INTERNAL_HOST}`（内网） / `${DIGEST_DEPLOY_SSH_HOST}`（公网）
-- Ping 测试：`${GEMINI_BASE_URL_HOST}` → **100% 丢包**
+- 配置的 LLM API 地址是一个私有网络地址
+- 当前服务器位于单独网络环境，无法直接访问该私有地址
+- 对该私有地址的连通性测试失败
 - 结论：**服务器无法访问该内网地址**
 
 **可能原因：**
@@ -65,7 +65,8 @@
 
 2. 更新服务器 `.env` 配置：
 ```bash
-ssh ${DIGEST_DEPLOY_SSH_USER}@${DIGEST_DEPLOY_SSH_HOST}
+ssh -p "${DIGEST_DEPLOY_SSH_PORT:-22}" \
+  "${DIGEST_DEPLOY_SSH_USER}@${DIGEST_DEPLOY_SSH_HOST}"
 # 编辑配置
 nano /opt/daily_ai_digest/backend/.env
 ```
@@ -73,7 +74,7 @@ nano /opt/daily_ai_digest/backend/.env
 修改为：
 ```env
 # Kimi 官方 API 示例
-GEMINI_API_KEY=sk-your-kimi-api-key
+GEMINI_API_KEY=<your-kimi-api-key>
 GEMINI_BASE_URL=https://api.moonshot.cn/v1
 GEMINI_MODEL=moonshot-v1-8k
 ```
@@ -92,7 +93,7 @@ python smoke_test.py
 
 #### 方案二：配置 VPC 对等连接
 
-如果必须使用 `${GEMINI_BASE_URL_HOST}` 这个内网地址：
+如果必须使用一个私有网络地址：
 1. 在百度云控制台配置 VPC 对等连接
 2. 确保服务器所在 VPC 可以访问千帆平台的 VPC
 3. 具体配置需参考百度千帆文档
@@ -125,7 +126,7 @@ python smoke_test.py
 
 ## 2. 部署架构决策
 
-- [x] 后端平台：百度云服务器 `${DIGEST_DEPLOY_SSH_HOST}`
+- [x] 后端平台：百度云服务器 `<your-server-host>`
 - [x] 前端平台：GitHub Pages `https://senweiv.github.io/daily_ai_digest/`
 - [x] 数据库：SQLite + 持久盘
 - [x] 定时策略：后端 APScheduler
@@ -163,7 +164,7 @@ python smoke_test.py
 
 3. **手动触发测试**
    ```bash
-   curl -X POST "${VITE_API_BASE_URL}/digest/trigger" \
+   curl -X POST "${VITE_API_BASE_URL:-http://<your-server-host>:8000/api}/digest/trigger" \
      -H "Content-Type: application/json" \
      -d '{"force": true, "send_email": true}'
    ```
@@ -178,11 +179,11 @@ python smoke_test.py
 
 | 参数 | 值 |
 |------|-----|
-| 公网 IP | `${DIGEST_DEPLOY_SSH_HOST}` |
-| 登录用户 | `root` |
-| SSH 端口 | `22` |
+| SSH Host | `${DIGEST_DEPLOY_SSH_HOST}` |
+| 登录用户 | `${DIGEST_DEPLOY_SSH_USER}` |
+| SSH 端口 | `${DIGEST_DEPLOY_SSH_PORT:-22}` |
 | SSH Key | `~/.ssh/id_ed25519` |
-| 连接命令 | `ssh -i ~/.ssh/id_ed25519 ${DIGEST_DEPLOY_SSH_USER}@${DIGEST_DEPLOY_SSH_HOST}` |
+| 连接命令 | `ssh -i ~/.ssh/id_ed25519 -p "${DIGEST_DEPLOY_SSH_PORT:-22}" "${DIGEST_DEPLOY_SSH_USER}@${DIGEST_DEPLOY_SSH_HOST}"` |
 
 ---
 
