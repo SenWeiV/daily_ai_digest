@@ -9,12 +9,14 @@ from typing import Optional, Tuple, List, Literal
 
 from app.config import settings
 from app.database import get_db
-from app.schemas import DigestRecord, GitHubDigestItem, YouTubeDigestItem, ExecutionLog
+from app.schemas import DigestRecord, GitHubDigestItem, ArxivDigestItem, YouTubeDigestItem, ExecutionLog
 from app.models import DigestRecordModel, ExecutionLogModel
 from app.agents.github_agent import github_agent
+from app.agents.arxiv_agent import arxiv_agent
 from app.agents.youtube_agent import youtube_agent
 from app.agents.gemini_analyzer import gemini_analyzer
 from app.services.email_service import email_service
+from app.services.content_selector import select_research_items
 
 logger = logging.getLogger(__name__)
 
@@ -79,11 +81,18 @@ class DigestService:
                     self.is_running = False
                     return True, f"{digest_type}摘要已存在", existing
             
-            # 获取GitHub数据（根据类型使用不同的时间范围）
-            github_items = await self._fetch_github_data(digest_type)
-            
-            # YouTube暂时保持每日模式（YouTube没有weekly/monthly trending）
-            youtube_items = await self._fetch_youtube_data()
+            # Source collection remains independent; YouTube is not part of research selection.
+            github_items, arxiv_items, youtube_items = await self._collect_source_data(digest_type)
+            github_items, arxiv_items = select_research_items(
+                github_items,
+                arxiv_items,
+                target_items=settings.target_items,
+                max_items=settings.max_items,
+            )
+            github_items, arxiv_items = await asyncio.gather(
+                github_agent.analyze_selected_repos(github_items),
+                self._analyze_arxiv_items(arxiv_items),
+            )
             
             # 生成总结
             daily_summary = None
@@ -103,6 +112,7 @@ class DigestService:
                 digest_date=record_date,
                 digest_type=digest_type,
                 github_data=github_items,
+                arxiv_data=arxiv_items,
                 youtube_data=youtube_items,
                 email_sent=False
             )
@@ -125,6 +135,7 @@ class DigestService:
                     email_sent = await email_service.send_digest_email(
                         digest_date=record_date,
                         github_items=github_items,
+                        arxiv_items=arxiv_items,
                         youtube_items=youtube_items,
                         daily_summary=daily_summary,
                         subject_suffix=subject_suffix
@@ -156,7 +167,10 @@ class DigestService:
             self.last_execution = start_time
             self.last_result = digest_record
             
-            message = f"[{digest_type}] 摘要生成完成: GitHub {len(github_items)} 个, YouTube {len(youtube_items)} 个"
+            message = (
+                f"[{digest_type}] 摘要生成完成: GitHub {len(github_items)} 个, "
+                f"arXiv {len(arxiv_items)} 个, YouTube {len(youtube_items)} 个"
+            )
             if email_sent:
                 message += ", 邮件已发送"
             
@@ -206,7 +220,19 @@ class DigestService:
     ) -> Tuple[bool, str, Optional[DigestRecord]]:
         """生成每月摘要"""
         return await self.generate_digest("monthly", target_date, send_email, force)
-    
+
+    async def _collect_source_data(
+        self,
+        digest_type: Literal["daily", "weekly", "monthly"],
+    ) -> tuple[List[GitHubDigestItem], List[ArxivDigestItem], List[YouTubeDigestItem]]:
+        """Collect all independent sources concurrently; selection happens afterwards."""
+        github_items, arxiv_items, youtube_items = await asyncio.gather(
+            self._fetch_github_data(digest_type),
+            self._fetch_arxiv_data(),
+            self._fetch_youtube_data(),
+        )
+        return github_items, arxiv_items, youtube_items
+
     async def _fetch_github_data(
         self,
         digest_type: Literal["daily", "weekly", "monthly"] = "daily"
@@ -224,11 +250,50 @@ class DigestService:
                 "monthly": "monthly"
             }.get(digest_type, "daily")
             
-            return await github_agent.get_trending_repos(time_range=time_range)
+            return await github_agent.get_research_repos(time_range=time_range)
         except Exception as e:
             logger.error(f"获取GitHub数据失败: {e}")
-            raise
-    
+            return []
+
+    async def _fetch_arxiv_data(self) -> List[ArxivDigestItem]:
+        """获取 arXiv 候选；失败不阻断其他来源。"""
+        if not arxiv_agent.is_available:
+            return []
+        try:
+            return await arxiv_agent.fetch()
+        except Exception as e:
+            logger.error(f"获取 arXiv 数据失败: {e}")
+            return []
+
+    async def _analyze_arxiv_items(self, items: List[ArxivDigestItem]) -> List[ArxivDigestItem]:
+        if not gemini_analyzer.is_available:
+            return items
+
+        semaphore = asyncio.Semaphore(3)
+
+        async def analyze(item: ArxivDigestItem):
+            async with semaphore:
+                return await gemini_analyzer.analyze_arxiv_paper(
+                    item.title,
+                    item.abstract,
+                    item.authors,
+                    item.categories,
+                )
+
+        analyses = await asyncio.gather(
+            *(analyze(item) for item in items),
+            return_exceptions=True,
+        )
+        for item, analysis in zip(items, analyses):
+            if isinstance(analysis, Exception):
+                logger.warning("arXiv analysis failed [%s]: %s", item.arxiv_id, analysis)
+                continue
+            for field in ("summary", "problem", "method", "evaluation", "results", "limitations"):
+                value = analysis.get(field)
+                if value:
+                    setattr(item, field, value)
+        return items
+
     async def _fetch_youtube_data(self) -> List[YouTubeDigestItem]:
         """获取YouTube数据"""
         if not youtube_agent.is_available:

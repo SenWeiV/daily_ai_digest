@@ -22,6 +22,30 @@ export interface GitHubDigestItem {
   learning_points: string[];
 }
 
+// arXiv 摘要项
+export interface ArxivDigestItem {
+  arxiv_id: string;
+  title: string;
+  abstract: string;
+  authors: string[];
+  categories: string[];
+  published_at: string | null;
+  updated_at: string | null;
+  version: string | null;
+  arxiv_url: string;
+  github_urls: string[];
+  research_topics: string[];
+  quality_evidence: string[];
+  quality_grade: "A" | "B" | "C";
+  related_repo_names: string[];
+  summary: string | null;
+  problem: string | null;
+  method: string | null;
+  evaluation: string | null;
+  results: string | null;
+  limitations: string | null;
+}
+
 // YouTube 摘要项
 export interface YouTubeDigestItem {
   video_id: string;
@@ -49,6 +73,7 @@ export interface DigestRecord {
   digest_date: string;
   digest_type: string; // daily/weekly/monthly
   github_data: GitHubDigestItem[];
+  arxiv_data: ArxivDigestItem[];
   youtube_data: YouTubeDigestItem[];
   email_sent: boolean;
   email_sent_at: string | null;
@@ -61,6 +86,7 @@ export interface DigestRecordBrief {
   id: number;
   digest_date: string;
   github_count: number;
+  arxiv_count: number;
   youtube_count: number;
   email_sent: boolean;
   created_at: string | null;

@@ -67,8 +67,18 @@ GEMINI_API_KEY=<your-kimi-api-key>
 GEMINI_BASE_URL=https://api.moonshot.cn/v1
 GEMINI_MODEL=moonshot-v1-8k
 
-# GitHub Token
+# GitHub Token 与研究内容发现
 GITHUB_TOKEN=<your-github-token>
+GITHUB_CANDIDATE_LIMIT=24
+GITHUB_NEW_PROJECT_DAYS=14
+GITHUB_SEARCH_QUERIES=
+
+# arXiv 与动态选择（A 优先，B 仅补足目标，不使用 C 填充）
+ARXIV_CATEGORIES=cs.AI,cs.CL,cs.CV,cs.LG,cs.IR
+ARXIV_CANDIDATE_LIMIT=24
+ARXIV_TIMEOUT_SECONDS=20
+TARGET_ITEMS=10
+MAX_ITEMS=24
 
 # Gmail SMTP（用于发送邮件摘要）
 GMAIL_SENDER=your_email@gmail.com
@@ -163,14 +173,20 @@ docker ps | grep daily-ai-digest
 当代码有更新时：
 
 ```bash
-# 方式一：使用脚本（会自动拉取代码并重建）
+# 通用方式：使用脚本（会自动拉取代码并重建）
 ./deploy-docker.sh update
 
-# 方式二：手动步骤
-git pull                    # 拉取最新代码
-./deploy-docker.sh build    # 重新构建镜像
-./deploy-docker.sh restart  # 重启服务
+# 生产小范围更新：只重建并替换 backend，保留 data volume
+git rev-parse HEAD
+git pull --ff-only
+docker compose up -d --build --no-deps backend
+
+docker compose ps backend
+curl --fail http://127.0.0.1:8000/health
+docker compose logs --since=10m backend | grep -E '数据库初始化完成|定时任务调度器启动|摘要生成完成'
 ```
+
+发布前先用 `docker ps --filter name=daily-ai-digest-backend` 确认权威运行时确实是 Compose 容器；如果生产机实际由 `daily-ai-digest.service` 管理，不要同时启动容器，应按 systemd 流程更新。日志验证应出现 GitHub、arXiv、YouTube 三源计数，且定时任务的下一次执行时间符合 `TIMEZONE`、`SCHEDULE_HOUR` 和 `SCHEDULE_MINUTE`。
 
 ## 🛠️ 故障排查
 
@@ -180,8 +196,8 @@ git pull                    # 拉取最新代码
 # 查看详细错误日志
 docker-compose logs backend
 
-# 检查环境变量是否正确加载
-docker exec daily-ai-digest-backend env | grep GEMINI
+# 只检查必要变量是否存在，不输出密钥值
+docker exec daily-ai-digest-backend python -c "import os; print({k: bool(os.getenv(k)) for k in ('GEMINI_API_KEY', 'GITHUB_TOKEN', 'EMAIL_PASSWORD')})"
 ```
 
 ### 问题2：API 无法访问

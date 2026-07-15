@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { RefreshCw, Calendar } from "lucide-react";
 import Dashboard from "../components/Dashboard";
 import GitHubList from "../components/GitHubList";
+import ArxivList from "../components/ArxivList";
 import YouTubeList from "../components/YouTubeList";
 import DetailModal from "../components/DetailModal";
 import { digestApi, systemApi } from "../services/api";
@@ -32,7 +33,7 @@ function Home() {
   const [selectedType, setSelectedType] = useState<"github" | "youtube">(
     "github",
   );
-  const [activeTab, setActiveTab] = useState<"github" | "youtube">("github");
+  const [activeTab, setActiveTab] = useState<"github" | "arxiv" | "youtube">("github");
   const [digestType, setDigestType] = useState<DigestType>("daily");
 
   // 加载数据
@@ -161,6 +162,16 @@ function Home() {
           🐙 GitHub Top {digest?.github_data?.length || 0}
         </button>
         <button
+          onClick={() => setActiveTab("arxiv")}
+          className={`px-6 py-2 rounded-md font-medium transition-colors ${
+            activeTab === "arxiv"
+              ? "bg-neutral-950 text-neutral-50 border border-neutral-800 rounded-full"
+              : "text-neutral-400 hover:text-white rounded-full"
+          }`}
+        >
+          📄 arXiv {digest?.arxiv_data?.length || 0}
+        </button>
+        <button
           onClick={() => setActiveTab("youtube")}
           className={`px-6 py-2 rounded-md font-medium transition-colors ${
             activeTab === "youtube"
@@ -190,6 +201,8 @@ function Home() {
               items={digest?.github_data || []}
               onItemClick={handleGitHubClick}
             />
+          ) : activeTab === "arxiv" ? (
+            <ArxivList items={digest?.arxiv_data || []} />
           ) : (
             <YouTubeList
               items={digest?.youtube_data || []}

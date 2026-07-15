@@ -311,6 +311,40 @@ README内容：
                 "learning_points": []
             }
     
+    async def analyze_arxiv_paper(
+        self,
+        title: str,
+        abstract: str,
+        authors: List[str],
+        categories: List[str],
+    ) -> Dict[str, Any]:
+        """Analyze a selected paper without inventing missing evidence."""
+        if not self.is_available:
+            return {"summary": abstract[:800]}
+        prompt = f"""请分析下面的 arXiv 论文元数据。只根据给定标题和摘要作答；摘要未提供的信息必须写“摘要未说明”，不要推测实验结果。
+
+标题: {title}
+作者: {', '.join(authors)}
+分类: {', '.join(categories)}
+摘要: {abstract[:12000]}
+
+返回严格 JSON：
+{{
+  "summary": "核心总结",
+  "problem": "研究问题",
+  "method": "方法",
+  "evaluation": "评测设置；未说明则明确写出",
+  "results": "主要结果；未说明则明确写出",
+  "limitations": "局限；未说明则明确写出"
+}}
+"""
+        try:
+            response = await self._generate_content(prompt)
+            return self._parse_json_response(response)
+        except Exception as exc:
+            logger.warning("arXiv analysis failed [%s]: %s", title, exc)
+            return {"summary": abstract[:800]}
+
     async def analyze_youtube_video(
         self,
         title: str,

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Calendar, ChevronRight, Github, Youtube, Mail, CheckCircle, XCircle } from 'lucide-react'
+import { BookOpen, Calendar, ChevronRight, Github, Youtube, Mail, CheckCircle, XCircle } from 'lucide-react'
 import { digestApi } from '../services/api'
 import GitHubList from '../components/GitHubList'
 import YouTubeList from '../components/YouTubeList'
+import ArxivList from '../components/ArxivList'
 import DetailModal from '../components/DetailModal'
 import type { DigestRecordBrief, DigestRecord, GitHubDigestItem, YouTubeDigestItem } from '../types'
 
@@ -13,7 +14,7 @@ function History() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [selectedItem, setSelectedItem] = useState<GitHubDigestItem | YouTubeDigestItem | null>(null)
   const [selectedType, setSelectedType] = useState<'github' | 'youtube'>('github')
-  const [activeTab, setActiveTab] = useState<'github' | 'youtube'>('github')
+  const [activeTab, setActiveTab] = useState<'github' | 'arxiv' | 'youtube'>('github')
 
   // 加载历史列表
   useEffect(() => {
@@ -99,6 +100,10 @@ function History() {
                     {item.github_count}
                   </span>
                   <span className="flex items-center">
+                    <BookOpen className="w-4 h-4 mr-1 text-blue-600" />
+                    {item.arxiv_count}
+                  </span>
+                  <span className="flex items-center">
                     <Youtube className="w-4 h-4 mr-1 text-red-600" />
                     {item.youtube_count}
                   </span>
@@ -143,6 +148,9 @@ function History() {
                   <Github className="w-4 h-4 mr-1 text-green-600" />
                   GitHub {selectedRecord.github_data?.length || 0} 个项目
                 </span>
+                <span className="flex items-center text-violet-600">
+                  📄 arXiv {selectedRecord.arxiv_data?.length || 0} 篇
+                </span>
                 <span className="flex items-center">
                   <Youtube className="w-4 h-4 mr-1 text-red-600" />
                   YouTube {selectedRecord.youtube_data?.length || 0} 个视频
@@ -169,6 +177,16 @@ function History() {
                 🐙 GitHub
               </button>
               <button
+                onClick={() => setActiveTab('arxiv')}
+                className={`px-6 py-2 rounded-md font-medium transition-colors ${
+                  activeTab === 'arxiv'
+                    ? 'bg-white text-violet-600 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                📄 arXiv
+              </button>
+              <button
                 onClick={() => setActiveTab('youtube')}
                 className={`px-6 py-2 rounded-md font-medium transition-colors ${
                   activeTab === 'youtube'
@@ -189,6 +207,8 @@ function History() {
                   setSelectedType('github')
                 }}
               />
+            ) : activeTab === 'arxiv' ? (
+              <ArxivList items={selectedRecord.arxiv_data || []} />
             ) : (
               <YouTubeList
                 items={selectedRecord.youtube_data || []}

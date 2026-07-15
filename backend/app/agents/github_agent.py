@@ -4,7 +4,7 @@ GitHub Agent - 从 GitHub Trending 页面检索热门AI项目
 
 import asyncio
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Any, Literal
 
 import httpx
@@ -17,6 +17,13 @@ from app.config import settings
 from app.schemas import GitHubDigestItem
 from app.agents.gemini_analyzer import gemini_analyzer
 from app.utils.helpers import truncate_text
+from app.content_profile import (
+    extract_explicit_arxiv_ids,
+    is_research_relevant,
+    matching_profiles,
+    quality_grade,
+    value_evidence,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,16 +34,17 @@ class GitHubAgent:
     # GitHub Trending URL
     TRENDING_URL = "https://github.com/trending"
     
-    # AI/ML 相关关键词（用于过滤）
-    AI_KEYWORDS = [
-        "ai", "llm", "agent", "gpt", "claude", "gemini", "openai", "anthropic",
-        "machine learning", "deep learning", "neural", "model", "language model",
-        "rag", "retrieval", "embedding", "vector", "transformer",
-        "autonomous", "bot", "assistant", "chatbot", "copilot",
-        "diffusion", "stable diffusion", "image generation", "text to image",
-        "fine-tune", "training", "inference", "prompt",
-        "mcp", "model context protocol"
-    ]
+    # Narrow queries intentionally combine a research domain and a content signal.
+    DEFAULT_SEARCH_QUERIES = (
+        '"vision language" benchmark',
+        'multimodal evaluation',
+        'agent benchmark',
+        'agentic workflow framework',
+        'llm evaluation dataset',
+        'topic:vision-language-model',
+        'topic:llm-evaluation',
+        'topic:ai-agents',
+    )
     
     # 重试配置
     MAX_RETRIES = 10
@@ -54,7 +62,8 @@ class GitHubAgent:
         self.token = settings.github_token
         self.client = None
         self.top_n = settings.github_top_n
-        
+        self._analysis_context: dict[str, Dict[str, Any]] = {}
+
         if self.token:
             self.client = Github(self.token)
             logger.info("GitHub Agent 初始化完成")
@@ -250,23 +259,32 @@ class GitHubAgent:
         logger.error(f"所有访问方式均失败，最后错误: {last_error}")
         return []
     
-    def is_ai_related(self, repo_info: Dict[str, Any]) -> bool:
-        """
-        判断仓库是否与 AI 相关
-        
-        Args:
-            repo_info: 仓库信息字典
-        
-        Returns:
-            是否AI相关
-        """
-        text_to_check = f"{repo_info.get('description', '')} {repo_info.get('full_name', '')}".lower()
-        
-        for keyword in self.AI_KEYWORDS:
-            if keyword.lower() in text_to_check:
-                return True
-        
-        return False
+    def is_ai_related(self, repo_info: Dict[str, Any], details: Optional[Dict[str, Any]] = None) -> bool:
+        """Require a research profile match instead of a broad keyword hit."""
+        details = details or {}
+        text_to_check = " ".join(
+            [
+                str(repo_info.get("description", "")),
+                str(repo_info.get("full_name", "")),
+                " ".join(repo_info.get("topics") or []),
+                str(details.get("readme_content", "")),
+            ]
+        )
+        return is_research_relevant(text_to_check)
+
+    def candidate_quality(self, repo_info: Dict[str, Any], details: Optional[Dict[str, Any]] = None) -> tuple[str, set[str], list[str]]:
+        details = details or {}
+        text = " ".join(
+            [
+                str(repo_info.get("description", "")),
+                str(repo_info.get("full_name", "")),
+                " ".join(repo_info.get("topics") or []),
+                str(details.get("readme_content", "")),
+            ]
+        )
+        evidence = value_evidence(repo_info, details)
+        topics = matching_profiles(text)
+        return quality_grade(relevant=bool(topics), evidence=evidence), evidence, topics
     
     async def get_repo_details_from_api(self, full_name: str) -> Optional[Repository]:
         """
@@ -306,10 +324,20 @@ class GitHubAgent:
         """
         details = {
             "readme_content": "",
-            "code_files": {}
+            "code_files": {},
+            "root_entries": [],
+            "topics": [],
         }
-        
+
         try:
+            try:
+                details["topics"] = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    repo.get_topics,
+                )
+            except Exception as e:
+                logger.warning(f"获取Topics失败 [{repo.full_name}]: {e}")
+
             # 获取README
             try:
                 readme = await asyncio.get_event_loop().run_in_executor(
@@ -326,7 +354,8 @@ class GitHubAgent:
                     None,
                     lambda: repo.get_contents("")
                 )
-                
+                details["root_entries"] = [content.name for content in contents]
+
                 # 查找核心文件
                 files_to_fetch = []
                 for content in contents:
@@ -360,7 +389,8 @@ class GitHubAgent:
         self,
         repo: Repository,
         details: Dict[str, Any],
-        stars_today: int = 0
+        stars_today: int = 0,
+        deep_analysis: bool = True,
     ) -> GitHubDigestItem:
         """
         使用Gemini分析单个仓库
@@ -382,13 +412,13 @@ class GitHubAgent:
             forks=repo.forks_count,
             description=repo.description or "",
             main_language=repo.language or "Unknown",
-            topics=repo.get_topics() if hasattr(repo, 'get_topics') else [],
+            topics=list(details.get("topics") or []),
             created_at=repo.created_at.isoformat() if repo.created_at else None,
             updated_at=repo.updated_at.isoformat() if repo.updated_at else None
         )
         
         # 使用Gemini进行深度分析
-        if gemini_analyzer.is_available and details.get("readme_content"):
+        if deep_analysis and gemini_analyzer.is_available and details.get("readme_content"):
             try:
                 analysis = await gemini_analyzer.analyze_github_repo(
                     repo_name=repo.full_name,
@@ -413,7 +443,196 @@ class GitHubAgent:
             item.summary = truncate_text(repo.description or "无描述", 200)
         
         return item
-    
+
+    async def analyze_selected_repos(
+        self,
+        items: List[GitHubDigestItem],
+    ) -> List[GitHubDigestItem]:
+        """Run model analysis only for candidates retained by the shared selector."""
+        analyzed_items: List[GitHubDigestItem] = []
+        for item in items:
+            context = self._analysis_context.get(item.repo_url.rstrip("/").lower())
+            if not context:
+                analyzed_items.append(item)
+                continue
+            try:
+                analyzed = await self.analyze_repo(
+                    context["repo"],
+                    context["details"],
+                    stars_today=item.stars_today,
+                    deep_analysis=True,
+                )
+                analyzed.research_topics = item.research_topics
+                analyzed.quality_evidence = item.quality_evidence
+                analyzed.quality_grade = item.quality_grade
+                analyzed.related_arxiv_ids = item.related_arxiv_ids
+                analyzed_items.append(analyzed)
+            except Exception as exc:
+                logger.warning("GitHub analysis failed [%s]: %s", item.repo_name, exc)
+                analyzed_items.append(item)
+        return analyzed_items
+
+    def _search_queries(self) -> tuple[str, ...]:
+        if settings.github_search_queries.strip():
+            return tuple(query.strip() for query in settings.github_search_queries.split(";") if query.strip())
+        return self.DEFAULT_SEARCH_QUERIES
+
+    async def search_repository_candidates(self) -> list[dict[str, Any]]:
+        """Search recently-created and recently-updated research repositories."""
+        if not self.client:
+            return []
+
+        cutoff = (date.today() - timedelta(days=settings.github_new_project_days)).isoformat()
+        queries = self._search_queries()
+        channel_limit = max(1, settings.github_candidate_limit // 2)
+        per_query = max(1, (channel_limit + max(len(queries), 1) - 1) // max(len(queries), 1))
+
+        def run_search(query: str, qualifier: str) -> list[Repository]:
+            results = self.client.search_repositories(
+                query=f"{query} {qualifier}:>={cutoff}",
+                sort="updated",
+                order="desc",
+            )
+            return list(results[:per_query])
+
+        candidates_by_channel: dict[str, dict[int, dict[str, Any]]] = {
+            "new": {},
+            "updated": {},
+        }
+        for query in queries:
+            for channel, qualifier in (("new", "created"), ("updated", "pushed")):
+                try:
+                    repos = await asyncio.get_event_loop().run_in_executor(None, run_search, query, qualifier)
+                except GithubException as exc:
+                    logger.warning("GitHub search failed [%s/%s]: %s", channel, query, exc)
+                    continue
+                for repo in repos:
+                    candidates_by_channel[channel][repo.id] = {
+                        "repo_id": repo.id,
+                        "full_name": repo.full_name,
+                        "url": repo.html_url,
+                        "description": repo.description or "",
+                        "language": repo.language or "Unknown",
+                        "stars_today": 0,
+                        "stars": repo.stargazers_count,
+                        "forks": repo.forks_count,
+                        "created_at": repo.created_at.isoformat() if repo.created_at else None,
+                        "updated_at": repo.updated_at.isoformat() if repo.updated_at else None,
+                        "topics": [],
+                        "channel": channel,
+                        "repo": repo,
+                    }
+
+        candidates: list[dict[str, Any]] = []
+        for channel in ("new", "updated"):
+            channel_candidates = sorted(
+                candidates_by_channel[channel].values(),
+                key=lambda item: (item.get("updated_at") or "", item.get("stars", 0)),
+                reverse=True,
+            )
+            candidates.extend(channel_candidates[:channel_limit])
+        return candidates[: settings.github_candidate_limit]
+
+    async def get_research_repos(
+        self,
+        time_range: Literal["daily", "weekly", "monthly"] = "daily",
+    ) -> List[GitHubDigestItem]:
+        """Collect and grade bounded candidates without running model analysis."""
+        self._analysis_context = {}
+        trending_data = await self.fetch_trending_repos(time_range=time_range)
+        for item in trending_data:
+            item["channel"] = "trending"
+
+        search_data = await self.search_repository_candidates()
+        merged: dict[str, dict[str, Any]] = {}
+        for candidate in [*trending_data, *search_data]:
+            key = str(candidate.get("full_name") or "").lower()
+            if not key:
+                continue
+            current = merged.get(key)
+            if current is None or candidate.get("channel") == "new":
+                merged[key] = candidate
+
+        channel_queues: dict[str, list[dict[str, Any]]] = {}
+        for channel in ("new", "updated", "trending"):
+            channel_queues[channel] = sorted(
+                (item for item in merged.values() if item.get("channel") == channel),
+                key=lambda item: (
+                    item.get("updated_at") or "",
+                    item.get("stars_today", 0),
+                    item.get("stars", 0),
+                ),
+                reverse=True,
+            )
+
+        inspection_pool: list[dict[str, Any]] = []
+        while len(inspection_pool) < settings.github_candidate_limit:
+            added = False
+            for channel in ("new", "updated", "trending"):
+                if channel_queues[channel]:
+                    inspection_pool.append(channel_queues[channel].pop(0))
+                    added = True
+                    if len(inspection_pool) == settings.github_candidate_limit:
+                        break
+            if not added:
+                break
+
+        graded: list[tuple[dict[str, Any], Repository, dict[str, Any], str, set[str], list[str]]] = []
+        seen_repo_ids: set[int] = set()
+        for repo_info in inspection_pool:
+            try:
+                repo = repo_info.get("repo") or await self.get_repo_details_from_api(repo_info["full_name"])
+                if not repo:
+                    continue
+                repo_id = int(repo.id)
+                if repo_id in seen_repo_ids:
+                    continue
+                seen_repo_ids.add(repo_id)
+                repo_info["repo_id"] = repo_id
+                details = await self.fetch_repo_details(repo)
+                repo_info["topics"] = list(details.get("topics") or [])
+                grade, evidence, topics = self.candidate_quality(repo_info, details)
+                if grade == "C":
+                    continue
+                graded.append((repo_info, repo, details, grade, evidence, topics))
+            except Exception as exc:
+                logger.warning("GitHub candidate failed [%s]: %s", repo_info.get("full_name"), exc)
+
+        graded.sort(
+            key=lambda row: (
+                row[3] == "A",
+                row[0].get("channel") == "new",
+                len(row[4]),
+                row[0].get("updated_at") or "",
+                row[0].get("stars_today", 0),
+            ),
+            reverse=True,
+        )
+
+        results: list[GitHubDigestItem] = []
+        for repo_info, repo, details, grade, evidence, topics in graded[: settings.github_candidate_limit]:
+            try:
+                item = await self.analyze_repo(
+                    repo,
+                    details,
+                    stars_today=repo_info.get("stars_today", 0),
+                    deep_analysis=False,
+                )
+                item.research_topics = topics
+                item.quality_evidence = sorted(evidence)
+                item.quality_grade = grade
+                item.related_arxiv_ids = extract_explicit_arxiv_ids(details.get("readme_content", ""))
+                self._analysis_context[item.repo_url.rstrip("/").lower()] = {
+                    "repo": repo,
+                    "details": details,
+                }
+                results.append(item)
+            except Exception as exc:
+                logger.warning("GitHub candidate build failed [%s]: %s", repo.full_name, exc)
+
+        logger.info("GitHub Agent completed with %s qualified projects", len(results))
+        return results
+
     async def get_trending_repos(
         self,
         time_range: Literal["daily", "weekly", "monthly"] = "daily"

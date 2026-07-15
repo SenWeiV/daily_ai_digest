@@ -30,6 +30,38 @@ class GitHubDigestItem(BaseModel):
     key_innovations: List[str] = Field(default_factory=list, description="关键创新点")
     practical_value: Optional[str] = Field(default=None, description="实用价值")
     learning_points: List[str] = Field(default_factory=list, description="学习要点")
+    research_topics: List[str] = Field(default_factory=list, description="匹配的研究主题")
+    quality_evidence: List[str] = Field(default_factory=list, description="质量证据")
+    quality_grade: str = Field(default="B", description="质量等级: A/B/C")
+    related_arxiv_ids: List[str] = Field(default_factory=list, description="显式关联的 arXiv ID")
+
+
+# =====================
+# arXiv 相关模型
+# =====================
+
+class ArxivDigestItem(BaseModel):
+    """arXiv论文摘要项"""
+    arxiv_id: str = Field(..., description="不含版本号的 arXiv ID")
+    title: str
+    abstract: str = ""
+    authors: List[str] = Field(default_factory=list)
+    categories: List[str] = Field(default_factory=list)
+    published_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    version: Optional[str] = None
+    arxiv_url: str
+    github_urls: List[str] = Field(default_factory=list)
+    research_topics: List[str] = Field(default_factory=list)
+    quality_evidence: List[str] = Field(default_factory=list)
+    quality_grade: str = Field(default="B", description="质量等级: A/B/C")
+    related_repo_names: List[str] = Field(default_factory=list)
+    summary: Optional[str] = None
+    problem: Optional[str] = None
+    method: Optional[str] = None
+    evaluation: Optional[str] = None
+    results: Optional[str] = None
+    limitations: Optional[str] = None
 
 
 # =====================
@@ -68,6 +100,7 @@ class DigestRecord(BaseModel):
     digest_date: date = Field(..., description="摘要日期")
     digest_type: str = Field(default="daily", description="摘要类型: daily/weekly/monthly")
     github_data: List[GitHubDigestItem] = Field(default_factory=list)
+    arxiv_data: List[ArxivDigestItem] = Field(default_factory=list)
     youtube_data: List[YouTubeDigestItem] = Field(default_factory=list)
     email_sent: bool = Field(default=False, description="邮件是否已发送")
     email_sent_at: Optional[datetime] = Field(default=None, description="邮件发送时间")
@@ -80,6 +113,7 @@ class DigestRecordBrief(BaseModel):
     id: int
     digest_date: date
     github_count: int = 0
+    arxiv_count: int = 0
     youtube_count: int = 0
     email_sent: bool = False
     created_at: Optional[datetime] = None

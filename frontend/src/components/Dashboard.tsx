@@ -1,5 +1,6 @@
 import {
   Github,
+  FileText,
   Youtube,
   Mail,
   Clock,
@@ -36,6 +37,14 @@ function Dashboard({ status, digest, loading }: DashboardProps) {
       color: "text-emerald-300",
       bgColor: "bg-emerald-400/10",
       configured: status?.github_configured,
+    },
+    {
+      label: "arXiv 论文",
+      value: digest?.arxiv_data?.length || 0,
+      icon: FileText,
+      color: "text-violet-300",
+      bgColor: "bg-violet-400/10",
+      configured: true,
     },
     {
       label: "YouTube 热门视频",

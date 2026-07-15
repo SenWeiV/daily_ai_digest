@@ -4,6 +4,7 @@
 
 import logging
 import ssl
+from html import escape
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, date
@@ -13,7 +14,7 @@ import aiosmtplib
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config import settings
-from app.schemas import GitHubDigestItem, YouTubeDigestItem
+from app.schemas import GitHubDigestItem, ArxivDigestItem, YouTubeDigestItem
 from app.utils.helpers import format_number
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ class EmailService:
         digest_date: date,
         github_items: List[GitHubDigestItem],
         youtube_items: List[YouTubeDigestItem],
+        arxiv_items: Optional[List[ArxivDigestItem]] = None,
         daily_summary: Optional[str] = None
     ) -> str:
         """生成HTML邮件模板"""
@@ -83,7 +85,27 @@ class EmailService:
                 </div>
             </div>
             """
-        
+
+        arxiv_items = arxiv_items or []
+        arxiv_html = ""
+        for i, item in enumerate(arxiv_items, 1):
+            title = escape(item.title)
+            arxiv_url = escape(item.arxiv_url, quote=True)
+            authors = escape(", ".join(item.authors[:5]))
+            summary = escape(item.summary or item.abstract[:600])
+            grade = escape(item.quality_grade)
+            categories = escape(", ".join(item.categories))
+            arxiv_html += f"""
+            <div style="background: #f8f9fa; border-radius: 8px; padding: 16px; margin-bottom: 16px; border-left: 4px solid #8250df;">
+                <h3 style="margin: 0 0 8px 0; color: #24292f;">
+                    {i}. <a href="{arxiv_url}" style="color: #0969da; text-decoration: none;">{title}</a>
+                </h3>
+                <p style="margin: 4px 0; color: #57606a;">{authors}</p>
+                <p style="margin: 8px 0; color: #24292f;">{summary}</p>
+                <p style="margin: 4px 0; color: #57606a;">质量: {grade} · {categories}</p>
+            </div>
+            """
+
         # YouTube 视频列表
         youtube_html = ""
         for i, item in enumerate(youtube_items, 1):
@@ -136,6 +158,10 @@ class EmailService:
             <div style="color: #57606a;">GitHub 热门项目</div>
         </div>
         <div>
+            <div style="font-size: 32px; font-weight: bold; color: #8250df;">📄 {len(arxiv_items)}</div>
+            <div style="color: #57606a;">arXiv 论文</div>
+        </div>
+        <div>
             <div style="font-size: 32px; font-weight: bold; color: #ff0000;">📺 {len(youtube_items)}</div>
             <div style="color: #57606a;">YouTube 热门视频</div>
         </div>
@@ -157,6 +183,12 @@ class EmailService:
         {github_html if github_html else '<p style="color: #57606a;">暂无数据</p>'}
     </div>
     
+    <!-- arXiv papers -->
+    <div style="margin: 32px 0;">
+        <h2 style="color: #24292f; border-bottom: 2px solid #8250df; padding-bottom: 8px;">arXiv 精选 {len(arxiv_items)}</h2>
+        {arxiv_html if arxiv_html else '<p style="color: #57606a;">暂无数据</p>'}
+    </div>
+
     <!-- YouTube Top 10 -->
     <div style="margin: 32px 0;">
         <h2 style="color: #24292f; border-bottom: 2px solid #ff0000; padding-bottom: 8px; display: flex; align-items: center;">
@@ -181,16 +213,18 @@ class EmailService:
         digest_date: date,
         github_items: List[GitHubDigestItem],
         youtube_items: List[YouTubeDigestItem],
+        arxiv_items: Optional[List[ArxivDigestItem]] = None,
         daily_summary: Optional[str] = None
     ) -> str:
         """生成纯文本邮件内容"""
-        
+
+        arxiv_items = arxiv_items or []
         lines = [
             "=" * 60,
             f"🤖 Daily AI Digest - {digest_date.strftime('%Y年%m月%d日')}",
             "=" * 60,
             "",
-            f"📊 今日概览: GitHub热门 {len(github_items)} 个 | YouTube热门 {len(youtube_items)} 个",
+            f"📊 今日概览: GitHub {len(github_items)} 个 | arXiv {len(arxiv_items)} 篇 | YouTube {len(youtube_items)} 个",
             "",
         ]
         
@@ -218,6 +252,21 @@ class EmailService:
                 "",
             ])
         
+        # arXiv
+        lines.extend([
+            "-" * 60,
+            f"📄 arXiv 精选 {len(arxiv_items)}",
+            "-" * 60,
+            "",
+        ])
+        for i, item in enumerate(arxiv_items, 1):
+            lines.extend([
+                f"{i}. {item.title}",
+                f"   链接: {item.arxiv_url}",
+                f"   总结: {item.summary or item.abstract[:600]}",
+                "",
+            ])
+
         # YouTube
         lines.extend([
             "-" * 60,
@@ -253,6 +302,7 @@ class EmailService:
         digest_date: date,
         github_items: List[GitHubDigestItem],
         youtube_items: List[YouTubeDigestItem],
+        arxiv_items: Optional[List[ArxivDigestItem]] = None,
         daily_summary: Optional[str] = None,
         recipient: Optional[str] = None,
         subject_suffix: str = "Daily"
@@ -280,19 +330,28 @@ class EmailService:
         try:
             # 创建邮件
             msg = MIMEMultipart("alternative")
-            msg["Subject"] = f"🤖 {subject_suffix} AI Digest - {digest_date.strftime('%Y-%m-%d')} | GitHub Top {len(github_items)} + YouTube Top {len(youtube_items)}"
+            arxiv_items = arxiv_items or []
+            msg["Subject"] = f"🤖 {subject_suffix} AI Digest - {digest_date.strftime('%Y-%m-%d')} | GitHub {len(github_items)} + arXiv {len(arxiv_items)} + YouTube {len(youtube_items)}"
             msg["From"] = self.sender_email
             msg["To"] = recipient
             
             # 纯文本版本
             text_content = self._generate_plain_text(
-                digest_date, github_items, youtube_items, daily_summary
+                digest_date,
+                github_items,
+                youtube_items,
+                arxiv_items=arxiv_items,
+                daily_summary=daily_summary,
             )
             part1 = MIMEText(text_content, "plain", "utf-8")
             
             # HTML版本
             html_content = self._generate_html_template(
-                digest_date, github_items, youtube_items, daily_summary
+                digest_date,
+                github_items,
+                youtube_items,
+                arxiv_items=arxiv_items,
+                daily_summary=daily_summary,
             )
             part2 = MIMEText(html_content, "html", "utf-8")
             

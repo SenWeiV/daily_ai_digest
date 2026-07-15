@@ -11,7 +11,8 @@ import aiosqlite
 from app.schemas import (
     DigestRecord, 
     DigestRecordBrief,
-    GitHubDigestItem, 
+    GitHubDigestItem,
+    ArxivDigestItem,
     YouTubeDigestItem,
     ExecutionLog,
     ConfigItem
@@ -25,16 +26,18 @@ class DigestRecordModel:
     async def create_with_type(db: aiosqlite.Connection, record: DigestRecord) -> int:
         """创建新的摘要记录（支持 digest_type）"""
         github_json = json.dumps([item.model_dump() for item in record.github_data], ensure_ascii=False)
+        arxiv_json = json.dumps([item.model_dump() for item in record.arxiv_data], ensure_ascii=False)
         youtube_json = json.dumps([item.model_dump() for item in record.youtube_data], ensure_ascii=False)
         
         digest_type = getattr(record, 'digest_type', 'daily')
         
         cursor = await db.execute(
             """
-            INSERT INTO digest_records (digest_date, digest_type, github_data, youtube_data, email_sent, email_sent_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO digest_records (digest_date, digest_type, github_data, arxiv_data, youtube_data, email_sent, email_sent_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(digest_date, digest_type) DO UPDATE SET
                 github_data = excluded.github_data,
+                arxiv_data = excluded.arxiv_data,
                 youtube_data = excluded.youtube_data,
                 updated_at = CURRENT_TIMESTAMP
             """,
@@ -42,6 +45,7 @@ class DigestRecordModel:
                 record.digest_date.isoformat(),
                 digest_type,
                 github_json,
+                arxiv_json,
                 youtube_json,
                 1 if record.email_sent else 0,
                 record.email_sent_at.isoformat() if record.email_sent_at else None
@@ -104,8 +108,8 @@ class DigestRecordModel:
         """根据类型获取历史摘要列表"""
         cursor = await db.execute(
             """
-            SELECT id, digest_date, github_data, youtube_data, email_sent, created_at
-            FROM digest_records 
+            SELECT id, digest_date, github_data, arxiv_data, youtube_data, email_sent, created_at
+            FROM digest_records
             WHERE digest_type = ?
             ORDER BY digest_date DESC 
             LIMIT ? OFFSET ?
@@ -117,12 +121,14 @@ class DigestRecordModel:
         result = []
         for row in rows:
             github_data = json.loads(row['github_data']) if row['github_data'] else []
+            arxiv_data = json.loads(row['arxiv_data']) if row['arxiv_data'] else []
             youtube_data = json.loads(row['youtube_data']) if row['youtube_data'] else []
-            
+
             result.append(DigestRecordBrief(
                 id=row['id'],
                 digest_date=date.fromisoformat(row['digest_date']),
                 github_count=len(github_data),
+                arxiv_count=len(arxiv_data),
                 youtube_count=len(youtube_data),
                 email_sent=bool(row['email_sent']),
                 created_at=datetime.fromisoformat(row['created_at']) if row['created_at'] else None
@@ -152,12 +158,20 @@ class DigestRecordModel:
     def _row_to_record(row) -> DigestRecord:
         """将数据库行转换为DigestRecord对象"""
         github_data = []
+        arxiv_data = []
         youtube_data = []
-        
+
         if row['github_data']:
             github_list = json.loads(row['github_data'])
             github_data = [GitHubDigestItem(**item) for item in github_list]
-        
+
+        try:
+            if row['arxiv_data']:
+                arxiv_list = json.loads(row['arxiv_data'])
+                arxiv_data = [ArxivDigestItem(**item) for item in arxiv_list]
+        except (KeyError, IndexError, json.JSONDecodeError, TypeError):
+            arxiv_data = []
+
         if row['youtube_data']:
             youtube_list = json.loads(row['youtube_data'])
             youtube_data = [YouTubeDigestItem(**item) for item in youtube_list]
@@ -173,6 +187,7 @@ class DigestRecordModel:
             digest_date=date.fromisoformat(row['digest_date']),
             digest_type=digest_type,
             github_data=github_data,
+            arxiv_data=arxiv_data,
             youtube_data=youtube_data,
             email_sent=bool(row['email_sent']),
             email_sent_at=datetime.fromisoformat(row['email_sent_at']) if row['email_sent_at'] else None,

@@ -61,9 +61,21 @@ class Settings(BaseSettings):
     cors_allow_origins: str = Field(default="", alias="CORS_ALLOW_ORIGINS")
     
     # 搜索配置
-    github_top_n: int = Field(default=10, description="GitHub Top N 数量")
-    youtube_top_n: int = Field(default=10, description="YouTube Top N 数量")
-    
+    github_top_n: int = Field(default=10, alias="GITHUB_TOP_N", description="GitHub Trending基础数量")
+    youtube_top_n: int = Field(default=10, alias="YOUTUBE_TOP_N", description="YouTube Top N 数量")
+    github_candidate_limit: int = Field(default=24, alias="GITHUB_CANDIDATE_LIMIT")
+    github_new_project_days: int = Field(default=14, alias="GITHUB_NEW_PROJECT_DAYS")
+    github_search_queries: str = Field(default="", alias="GITHUB_SEARCH_QUERIES")
+    arxiv_categories: str = Field(default="cs.AI,cs.CL,cs.CV,cs.LG,cs.IR", alias="ARXIV_CATEGORIES")
+    arxiv_candidate_limit: int = Field(default=24, alias="ARXIV_CANDIDATE_LIMIT")
+    arxiv_timeout_seconds: float = Field(default=20.0, alias="ARXIV_TIMEOUT_SECONDS")
+    target_items: int = Field(default=10, alias="TARGET_ITEMS")
+    max_items: int = Field(default=24, alias="MAX_ITEMS")
+
+    @property
+    def arxiv_categories_list(self) -> list[str]:
+        return [item.strip() for item in self.arxiv_categories.split(",") if item.strip()]
+
     # 搜索关键词 - 聚焦 AI Agent/AGI/LLM 领域
     ai_keywords: list[str] = Field(
         default=[

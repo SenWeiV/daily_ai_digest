@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS digest_records (
     digest_date DATE NOT NULL,
     digest_type TEXT DEFAULT 'daily' NOT NULL,
     github_data TEXT,
+    arxiv_data TEXT,
     youtube_data TEXT,
     email_sent INTEGER DEFAULT 0,
     email_sent_at TEXT,
@@ -95,7 +96,12 @@ async def _run_migrations(db: aiosqlite.Connection):
         await db.execute("ALTER TABLE digest_records ADD COLUMN digest_type TEXT DEFAULT 'daily'")
         await db.commit()
         print("数据库迁移: 添加 digest_records.digest_type 列")
-    
+
+    if 'arxiv_data' not in columns:
+        await db.execute("ALTER TABLE digest_records ADD COLUMN arxiv_data TEXT")
+        await db.commit()
+        print("数据库迁移: 添加 digest_records.arxiv_data 列")
+
     # 确保 digest_records 表有正确的 UNIQUE 约束
     await _ensure_unique_constraint(db)
 
@@ -114,14 +120,18 @@ async def _ensure_unique_constraint(db: aiosqlite.Connection):
     
     print("数据库迁移: 重建 digest_records 表以添加正确的 UNIQUE 约束...")
     
-    # 重建表
+    # 在单个事务中重建，避免进程中断后留下半迁移状态。
     await db.executescript("""
+        BEGIN IMMEDIATE;
+        DROP TABLE IF EXISTS digest_records_new;
+
         -- 创建带正确约束的新表
-        CREATE TABLE IF NOT EXISTS digest_records_new (
+        CREATE TABLE digest_records_new (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             digest_date DATE NOT NULL,
             digest_type TEXT DEFAULT 'daily' NOT NULL,
             github_data TEXT,
+            arxiv_data TEXT,
             youtube_data TEXT,
             email_sent INTEGER DEFAULT 0,
             email_sent_at TEXT,
@@ -131,8 +141,8 @@ async def _ensure_unique_constraint(db: aiosqlite.Connection):
         );
         
         -- 复制数据（如果旧表存在数据）
-        INSERT OR IGNORE INTO digest_records_new 
-        SELECT id, digest_date, digest_type, github_data, youtube_data, email_sent, email_sent_at, created_at, updated_at
+        INSERT OR IGNORE INTO digest_records_new
+        SELECT id, digest_date, digest_type, github_data, arxiv_data, youtube_data, email_sent, email_sent_at, created_at, updated_at
         FROM digest_records;
         
         -- 删除旧表
@@ -143,8 +153,8 @@ async def _ensure_unique_constraint(db: aiosqlite.Connection):
         
         -- 重建索引
         CREATE INDEX IF NOT EXISTS idx_digest_date ON digest_records(digest_date);
+        COMMIT;
     """)
-    await db.commit()
     print("数据库迁移: digest_records 表重建完成")
 
 
