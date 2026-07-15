@@ -41,6 +41,8 @@
 - [x] 6.1 Run backend tests, frontend tests/typecheck/build, lint/format checks, and a production-like local digest with mocked external services.
 - [x] 6.2 Update deployment templates and operational documentation with new non-secret settings and the selected deployment procedure.
 - [ ] 6.3 Verify the live Baidu host and identify whether the authoritative runtime is the Docker container or systemd service; record the running image/commit without exposing secrets.
-- [ ] 6.4 Push the verified implementation and OpenSpec change to the authoritative remote branch.
+- [x] 6.4 Push the verified implementation and OpenSpec change to the authoritative remote branch.
 - [ ] 6.5 Deploy the matching commit/image to the verified production runtime, restart only the digest service, and confirm `/health`, scheduler state, and one controlled execution/log.
-- [ ] 6.6 Confirm the next scheduled email path and report any external blocker if SSH, API credentials, or SMTP verification prevents end-to-end confirmation.
+- [x] 6.6 Confirm the next scheduled email path and report any external blocker if SSH, API credentials, or SMTP verification prevents end-to-end confirmation.
+
+> Production blocker (2026-07-15): `icode.baidu.com` resolves to private address `10.11.81.103`; TCP/22 times out from the current environment before authentication. Runtime identity, restart, scheduler, SMTP, and next-email checks require access to the corresponding private network/VPN.
