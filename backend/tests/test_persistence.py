@@ -1,12 +1,12 @@
 import asyncio
-from datetime import date
+from datetime import date, datetime
 
 import aiosqlite
 
 from app.config import settings
 from app.database import get_db, init_database
-from app.models import DigestRecordModel
-from app.schemas import ArxivDigestItem, DigestRecord, GitHubDigestItem
+from app.models import DigestRecordModel, ExecutionLogModel
+from app.schemas import ArxivDigestItem, DigestRecord, ExecutionLog, GitHubDigestItem
 
 
 def test_arxiv_persistence_and_legacy_empty_default(tmp_path):
@@ -87,6 +87,33 @@ def test_legacy_unique_constraint_rebuild_preserves_data(tmp_path):
             assert row["digest_date"] == "2026-07-13"
             assert row["arxiv_data"] is None
             assert "UNIQUE(digest_date, digest_type)" in schema[0]
+
+    try:
+        asyncio.run(run())
+    finally:
+        settings.database_path = original_path
+
+
+def test_execution_logs_preserve_digest_type(tmp_path):
+    original_path = settings.database_path
+    settings.database_path = str(tmp_path / "execution-logs.db")
+
+    async def run():
+        await init_database()
+        log = ExecutionLog(
+            execution_time=datetime(2026, 7, 15, 8, 37),
+            status="success",
+            github_count=20,
+            youtube_count=0,
+            digest_type="monthly",
+        )
+        async with get_db() as db:
+            await ExecutionLogModel.create(db, log)
+            recent = await ExecutionLogModel.get_recent(db, limit=1)
+            latest = await ExecutionLogModel.get_last_successful(db)
+            assert recent[0].digest_type == "monthly"
+            assert latest is not None
+            assert latest.digest_type == "monthly"
 
     try:
         asyncio.run(run())

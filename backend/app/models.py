@@ -241,6 +241,7 @@ class ExecutionLogModel:
                 status=row['status'],
                 github_count=row['github_count'],
                 youtube_count=row['youtube_count'],
+                digest_type=row['digest_type'] or "daily",
                 error_message=row['error_message'],
                 duration_seconds=row['duration_seconds'],
                 created_at=datetime.fromisoformat(row['created_at']) if row['created_at'] else None
@@ -269,6 +270,7 @@ class ExecutionLogModel:
             status=row['status'],
             github_count=row['github_count'],
             youtube_count=row['youtube_count'],
+            digest_type=row['digest_type'] or "daily",
             error_message=row['error_message'],
             duration_seconds=row['duration_seconds'],
             created_at=datetime.fromisoformat(row['created_at']) if row['created_at'] else None
