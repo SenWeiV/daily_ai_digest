@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     github_candidate_limit: int = Field(default=24, alias="GITHUB_CANDIDATE_LIMIT")
     github_new_project_days: int = Field(default=14, alias="GITHUB_NEW_PROJECT_DAYS")
     github_search_queries: str = Field(default="", alias="GITHUB_SEARCH_QUERIES")
+    github_trending_timeout_seconds: float = Field(default=120.0, alias="GITHUB_TRENDING_TIMEOUT_SECONDS")
     arxiv_categories: str = Field(default="cs.AI,cs.CL,cs.CV,cs.LG,cs.IR", alias="ARXIV_CATEGORIES")
     arxiv_candidate_limit: int = Field(default=24, alias="ARXIV_CANDIDATE_LIMIT")
     arxiv_timeout_seconds: float = Field(default=20.0, alias="ARXIV_TIMEOUT_SECONDS")

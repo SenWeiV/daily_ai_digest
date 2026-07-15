@@ -297,3 +297,41 @@ def test_arxiv_feed_failure_does_not_drop_other_categories(monkeypatch):
     items = asyncio.run(agent.fetch())
 
     assert [item.arxiv_id for item in items] == ["2501.08888"]
+
+
+def test_trending_timeout_degrades_without_blocking_search(monkeypatch):
+    async def slow_trending(time_range):
+        await asyncio.sleep(1)
+        return [{"full_name": "org/late"}]
+
+    agent = GitHubAgent()
+    agent.fetch_trending_repos = AsyncMock(side_effect=slow_trending)
+    monkeypatch.setattr("app.agents.github_agent.settings.github_trending_timeout_seconds", 0.01)
+
+    result = asyncio.run(agent._fetch_bounded_trending("daily"))
+
+    assert result == []
+    agent.fetch_trending_repos.assert_awaited_once_with(time_range="daily")
+
+
+def test_search_failure_preserves_qualified_trending_candidates():
+    class FakeRepo:
+        id = 91
+        full_name = "org/trending"
+
+    repo = FakeRepo()
+    agent = GitHubAgent()
+    agent.fetch_trending_repos = AsyncMock(
+        return_value=[{"full_name": repo.full_name, "repo": repo, "stars_today": 5}]
+    )
+    agent.search_repository_candidates = AsyncMock(side_effect=RuntimeError("search unavailable"))
+    agent.fetch_repo_details = AsyncMock(return_value={"readme_content": "readme", "topics": []})
+    agent.candidate_quality = Mock(
+        return_value=("A", {"implementation", "substantive_readme"}, ["agentic"])
+    )
+    candidate = github_item(repo.full_name, "A")
+    agent.analyze_repo = AsyncMock(return_value=candidate)
+
+    results = asyncio.run(agent.get_research_repos())
+
+    assert results == [candidate]

@@ -533,17 +533,46 @@ class GitHubAgent:
             candidates.extend(channel_candidates[:channel_limit])
         return candidates[: settings.github_candidate_limit]
 
+    async def _fetch_bounded_trending(
+        self,
+        time_range: Literal["daily", "weekly", "monthly"],
+    ) -> list[dict[str, Any]]:
+        try:
+            return await asyncio.wait_for(
+                self.fetch_trending_repos(time_range=time_range),
+                timeout=settings.github_trending_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "GitHub Trending timed out after %.1fs; continuing with Repository Search",
+                settings.github_trending_timeout_seconds,
+            )
+            return []
+
     async def get_research_repos(
         self,
         time_range: Literal["daily", "weekly", "monthly"] = "daily",
     ) -> List[GitHubDigestItem]:
         """Collect and grade bounded candidates without running model analysis."""
         self._analysis_context = {}
-        trending_data = await self.fetch_trending_repos(time_range=time_range)
+        trending_result, search_result = await asyncio.gather(
+            self._fetch_bounded_trending(time_range),
+            self.search_repository_candidates(),
+            return_exceptions=True,
+        )
+        if isinstance(trending_result, BaseException):
+            logger.warning("GitHub Trending failed: %s", trending_result)
+            trending_data = []
+        else:
+            trending_data = trending_result
+        if isinstance(search_result, BaseException):
+            logger.warning("GitHub Repository Search failed: %s", search_result)
+            search_data = []
+        else:
+            search_data = search_result
+
         for item in trending_data:
             item["channel"] = "trending"
-
-        search_data = await self.search_repository_candidates()
         merged: dict[str, dict[str, Any]] = {}
         for candidate in [*trending_data, *search_data]:
             key = str(candidate.get("full_name") or "").lower()
