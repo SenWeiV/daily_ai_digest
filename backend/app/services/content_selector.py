@@ -45,10 +45,34 @@ def _stable_key(item: ResearchItem) -> str:
     return f"arxiv:{item.arxiv_id.lower()}"
 
 
-def _rank_key(item: ResearchItem) -> tuple[int, int, datetime, int, str]:
+def _rank_key(item: ResearchItem) -> tuple[int, int, float, int, int, int, int, datetime, str]:
     grade_rank = {"A": 2, "B": 1, "C": 0}.get(_item_grade(item), 0)
-    momentum = getattr(item, "stars_today", 0) or getattr(item, "stars", 0) or 0
-    return (grade_rank, _item_evidence_count(item), _item_time(item), int(momentum), _stable_key(item))
+    if isinstance(item, GitHubDigestItem):
+        source_rank = int(item.source_channel == "trending")
+        recent_comments = item.recent_issue_comments if item.recent_issue_comments is not None else -1
+        activity = item.forks + item.watchers + item.open_issues
+        return (
+            grade_rank,
+            source_rank,
+            item.recent_star_velocity,
+            recent_comments,
+            item.stars,
+            activity,
+            _item_evidence_count(item),
+            _item_time(item),
+            _stable_key(item),
+        )
+    return (
+        grade_rank,
+        0,
+        0.0,
+        -1,
+        0,
+        0,
+        _item_evidence_count(item),
+        _item_time(item),
+        _stable_key(item),
+    )
 
 
 def _deduplicate(items: Iterable[ResearchItem]) -> list[ResearchItem]:
@@ -106,7 +130,7 @@ def _coverage_order(items: list[ResearchItem]) -> list[ResearchItem]:
     seen_topics: set[str] = set()
 
     while remaining:
-        def coverage_key(item: ResearchItem) -> tuple[int, int, tuple[int, int, datetime, int, str]]:
+        def coverage_key(item: ResearchItem) -> tuple[int, int, tuple]:
             source = "github" if isinstance(item, GitHubDigestItem) else "arxiv"
             new_source = int(source not in seen_sources)
             new_topics = len(set(_item_topics(item)) - seen_topics)

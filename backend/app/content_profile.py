@@ -148,6 +148,7 @@ def value_evidence(repo_info: dict[str, Any], details: dict[str, Any] | None = N
 
 
 def quality_grade(*, relevant: bool, evidence: Iterable[str], source: str = "github") -> str:
+    """Grade arXiv items and retain the legacy GitHub fallback for old callers."""
     evidence_set = set(evidence)
     if not relevant:
         return "C"
@@ -158,6 +159,53 @@ def quality_grade(*, relevant: bool, evidence: Iterable[str], source: str = "git
     reproducible = {"implementation", "artifacts_or_experiments"}.issubset(evidence_set)
     if (substantive and concrete) or reproducible:
         return "A"
-    if evidence_set:
-        return "B"
-    return "C"
+    return "B" if evidence_set else "C"
+
+
+def github_social_grade(
+    *,
+    relevant: bool,
+    source_channel: str,
+    recent_stars: int,
+    recent_issue_comments: int | None,
+    forks: int,
+    watchers: int,
+    open_issues: int,
+    min_recent_comments: int = 5,
+    activity_signal_threshold: int = 10,
+) -> tuple[str, set[str]]:
+    """Apply explicit social-proof gates without a fitted popularity score."""
+    if not relevant:
+        return "C", set()
+
+    evidence: set[str] = set()
+    if recent_stars > 0:
+        evidence.add("trending_momentum")
+    if recent_issue_comments is not None:
+        evidence.add("comments_available")
+        if recent_issue_comments >= min_recent_comments:
+            evidence.add("recent_conversation")
+    else:
+        evidence.add("comments_unavailable")
+
+    activity_signals = sum(
+        value >= activity_signal_threshold
+        for value in (forks, watchers, open_issues)
+    )
+    if activity_signals >= 2:
+        evidence.add("repository_activity")
+
+    direct_social_proof = "recent_conversation" in evidence
+    fallback_social_proof = recent_issue_comments is None and "repository_activity" in evidence
+    has_social_proof = direct_social_proof or fallback_social_proof
+
+    if source_channel == "trending":
+        if recent_stars > 0 and has_social_proof:
+            return "A", evidence
+        if recent_stars > 0 or has_social_proof:
+            return "B", evidence
+        return "C", evidence
+
+    if source_channel == "search" and has_social_proof:
+        return "B", evidence
+    return "C", evidence

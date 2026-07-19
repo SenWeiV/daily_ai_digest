@@ -1,4 +1,4 @@
-import { X, Star, GitFork, Eye, ThumbsUp, ExternalLink, Code } from 'lucide-react'
+import { X, Star, GitFork, Eye, ThumbsUp, ExternalLink, Code, MessageCircle, TrendingUp } from 'lucide-react'
 import type { GitHubDigestItem, YouTubeDigestItem } from '../types'
 
 interface DetailModalProps {
@@ -11,6 +11,14 @@ function formatNumber(num: number): string {
   if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M'
   if (num >= 1000) return (num / 1000).toFixed(1) + 'K'
   return num.toString()
+}
+
+function recentStarsLabel(item: GitHubDigestItem): string | null {
+  const recentStars = item.recent_stars || item.stars_today
+  if (recentStars <= 0) return null
+  const labels = { daily: '今日', weekly: '本周', monthly: '本月' }
+  const period = item.trending_period ? labels[item.trending_period] : '近期'
+  return `${period} +${formatNumber(recentStars)}`
 }
 
 function DetailModal({ item, type, onClose }: DetailModalProps) {
@@ -61,11 +69,23 @@ function DetailModal({ item, type, onClose }: DetailModalProps) {
                 <div className="flex items-center flex-wrap gap-4 mt-3 text-sm">
                   {isGitHub ? (
                     <>
-                      <div className="flex items-center space-x-1 text-yellow-500">
+                      <div className="flex items-center space-x-1 text-yellow-500" title="总 Star">
                         <Star className="w-4 h-4 fill-current" />
                         <span className="font-medium">{formatNumber(githubItem.stars)}</span>
                       </div>
-                      <div className="flex items-center space-x-1 text-gray-500">
+                      {recentStarsLabel(githubItem) && (
+                        <div className="flex items-center space-x-1 text-green-600" title="Trending 周期新增 Star">
+                          <TrendingUp className="w-4 h-4" />
+                          <span>{recentStarsLabel(githubItem)}</span>
+                        </div>
+                      )}
+                      {githubItem.recent_issue_comments !== null && (
+                        <div className="flex items-center space-x-1 text-blue-600" title="近期 Issue/PR 评论">
+                          <MessageCircle className="w-4 h-4" />
+                          <span>{formatNumber(githubItem.recent_issue_comments)}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center space-x-1 text-gray-500" title="Fork">
                         <GitFork className="w-4 h-4" />
                         <span>{formatNumber(githubItem.forks)}</span>
                       </div>

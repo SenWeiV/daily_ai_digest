@@ -9,6 +9,15 @@ export interface GitHubDigestItem {
   stars: number;
   stars_today: number;
   forks: number;
+  watchers: number;
+  open_issues: number;
+  recent_issue_comments: number | null;
+  source_channel: 'trending' | 'search' | 'legacy';
+  trending_rank: number | null;
+  trending_period: 'daily' | 'weekly' | 'monthly' | null;
+  recent_stars: number;
+  recent_star_period_days: number;
+  recent_star_velocity: number;
   description: string | null;
   main_language: string | null;
   topics: string[];

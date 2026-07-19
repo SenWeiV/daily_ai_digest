@@ -4,14 +4,13 @@ GitHub Agent - 从 GitHub Trending 页面检索热门AI项目
 
 import asyncio
 import logging
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import List, Optional, Dict, Any, Literal
 
 import httpx
 from bs4 import BeautifulSoup
 from github import Github, GithubException
 from github.Repository import Repository
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, before_sleep_log
 
 from app.config import settings
 from app.schemas import GitHubDigestItem
@@ -19,9 +18,9 @@ from app.agents.gemini_analyzer import gemini_analyzer
 from app.utils.helpers import truncate_text
 from app.content_profile import (
     extract_explicit_arxiv_ids,
+    github_social_grade,
     is_research_relevant,
     matching_profiles,
-    quality_grade,
     value_evidence,
 )
 
@@ -46,8 +45,7 @@ class GitHubAgent:
         'topic:ai-agents',
     )
     
-    # 重试配置
-    MAX_RETRIES = 10
+    # Trending 网络异常类型
     RETRYABLE_EXCEPTIONS = (
         httpx.TimeoutException,
         httpx.ConnectError,
@@ -109,7 +107,8 @@ class GitHubAgent:
         url: str,
         proxy: Optional[str],
         headers: dict,
-        retry_count: int = 0
+        time_range: Literal["daily", "weekly", "monthly"],
+        attempt_number: int = 1,
     ) -> tuple[bool, List[Dict[str, Any]], Optional[Exception]]:
         """
         单个 URL 请求（带重试逻辑）
@@ -118,17 +117,24 @@ class GitHubAgent:
             url: 请求 URL
             proxy: 代理地址
             headers: 请求头
-            retry_count: 当前重试次数
-        
+            time_range: Trending周期
+            attempt_number: 当前全局尝试序号
+
         Returns:
             (成功标志, 仓库列表, 错误信息)
         """
         try:
-            logger.info(f"正在抓取 GitHub Trending: {url} (proxy: {proxy or '无'}, 重试: {retry_count}/{self.MAX_RETRIES})")
-            
+            logger.info(
+                "正在抓取 GitHub Trending: %s (proxy: %s, 尝试: %s/%s)",
+                url,
+                proxy or "无",
+                attempt_number,
+                settings.github_trending_max_attempts,
+            )
+
             client_kwargs = {
-                "timeout": 30.0,
-                "follow_redirects": True
+                "timeout": settings.github_trending_attempt_timeout_seconds,
+                "follow_redirects": True,
             }
             if proxy:
                 client_kwargs["proxies"] = proxy
@@ -141,7 +147,8 @@ class GitHubAgent:
                 repo_list = soup.find_all('article', class_='Box-row')
                 
                 trending_repos = []
-                for article in repo_list:
+                period_days = {"daily": 1, "weekly": 7, "monthly": 30}[time_range]
+                for rank, article in enumerate(repo_list, 1):
                     try:
                         h2_tag = article.find('h2', class_='h3')
                         if not h2_tag:
@@ -161,21 +168,27 @@ class GitHubAgent:
                         repo_language = lang_tag.get_text(strip=True) if lang_tag else "Unknown"
                         
                         stars_tag = article.find('span', class_='d-inline-block float-sm-right')
-                        stars_today = 0
+                        recent_stars = 0
                         if stars_tag:
                             stars_text = stars_tag.get_text(strip=True)
                             try:
-                                stars_today = int(stars_text.split()[0].replace(',', ''))
+                                recent_stars = int(stars_text.split()[0].replace(',', ''))
                             except (ValueError, IndexError):
                                 pass
-                        
+
                         trending_repos.append({
                             "full_name": repo_full_name,
                             "url": repo_url,
                             "description": description,
                             "language": repo_language,
-                            "stars_today": stars_today,
-                            "time_range": ""
+                            "stars_today": recent_stars,
+                            "recent_stars": recent_stars,
+                            "recent_star_period_days": period_days,
+                            "recent_star_velocity": recent_stars / period_days,
+                            "trending_rank": rank,
+                            "trending_period": time_range,
+                            "source_channel": "trending",
+                            "time_range": time_range,
                         })
                         
                     except Exception as e:
@@ -209,7 +222,7 @@ class GitHubAgent:
         language: str = ""
     ) -> List[Dict[str, Any]]:
         """
-        从 GitHub Trending 页面抓取热门仓库（支持代理和镜像 fallback，每个 URL 最多重试 10 次）
+        从 GitHub Trending 页面抓取热门仓库（所有访问方式共享全局重试预算）
         
         Args:
             time_range: 时间范围 - daily(今日), weekly(本周), monthly(本月)
@@ -230,33 +243,35 @@ class GitHubAgent:
         }
         
         last_error = None
-        
-        for url, proxy in urls_to_try:
-            # 每个 URL 最多重试 10 次
-            for retry_count in range(self.MAX_RETRIES):
-                success, repos, error = await self._fetch_single_url(url, proxy, headers, retry_count)
-                
-                if success and repos:
-                    # 更新 time_range
-                    for repo in repos:
-                        repo["time_range"] = time_range
-                    return repos
-                
-                last_error = error
-                
-                # 判断是否应该重试
-                if error and isinstance(error, httpx.HTTPStatusError):
-                    if 400 <= error.response.status_code < 500:
-                        # 4xx 错误不重试，直接尝试下一个 URL
-                        break
-                
-                # 指数退避等待
-                if retry_count < self.MAX_RETRIES - 1:
-                    wait_time = min(2 ** retry_count, 60)  # 最大 60 秒
-                    logger.info(f"等待 {wait_time} 秒后重试...")
-                    await asyncio.sleep(wait_time)
-        
-        logger.error(f"所有访问方式均失败，最后错误: {last_error}")
+        max_attempts = max(1, settings.github_trending_max_attempts)
+
+        for attempt_index in range(max_attempts):
+            url, proxy = urls_to_try[attempt_index % len(urls_to_try)]
+            success, repos, error = await self._fetch_single_url(
+                url,
+                proxy,
+                headers,
+                time_range,
+                attempt_number=attempt_index + 1,
+            )
+            if success and repos:
+                return repos
+
+            last_error = error
+            should_wait = True
+            if isinstance(error, httpx.HTTPStatusError):
+                status_code = error.response.status_code
+                should_wait = status_code == 429 or status_code >= 500
+            if attempt_index < max_attempts - 1 and should_wait:
+                wait_time = min(2 ** min(attempt_index, 3), 10)
+                logger.info("等待 %s 秒后尝试下一个 Trending 访问方式...", wait_time)
+                await asyncio.sleep(wait_time)
+
+        logger.error(
+            "GitHub Trending 在 %s 次尝试后仍失败，最后错误: %s",
+            max_attempts,
+            last_error,
+        )
         return []
     
     def is_ai_related(self, repo_info: Dict[str, Any], details: Optional[Dict[str, Any]] = None) -> bool:
@@ -284,7 +299,19 @@ class GitHubAgent:
         )
         evidence = value_evidence(repo_info, details)
         topics = matching_profiles(text)
-        return quality_grade(relevant=bool(topics), evidence=evidence), evidence, topics
+        grade, social_evidence = github_social_grade(
+            relevant=bool(topics),
+            source_channel=str(repo_info.get("source_channel") or repo_info.get("channel") or "legacy"),
+            recent_stars=int(repo_info.get("recent_stars") or 0),
+            recent_issue_comments=repo_info.get("recent_issue_comments"),
+            forks=int(repo_info.get("forks") or 0),
+            watchers=int(repo_info.get("watchers") or 0),
+            open_issues=int(repo_info.get("open_issues") or 0),
+            min_recent_comments=settings.github_min_recent_comments_a,
+            activity_signal_threshold=settings.github_activity_signal_threshold,
+        )
+        evidence.update(social_evidence)
+        return grade, evidence, topics
     
     async def get_repo_details_from_api(self, full_name: str) -> Optional[Repository]:
         """
@@ -462,10 +489,22 @@ class GitHubAgent:
                     stars_today=item.stars_today,
                     deep_analysis=True,
                 )
-                analyzed.research_topics = item.research_topics
-                analyzed.quality_evidence = item.quality_evidence
-                analyzed.quality_grade = item.quality_grade
-                analyzed.related_arxiv_ids = item.related_arxiv_ids
+                for field in (
+                    "watchers",
+                    "open_issues",
+                    "recent_issue_comments",
+                    "source_channel",
+                    "trending_rank",
+                    "trending_period",
+                    "recent_stars",
+                    "recent_star_period_days",
+                    "recent_star_velocity",
+                    "research_topics",
+                    "quality_evidence",
+                    "quality_grade",
+                    "related_arxiv_ids",
+                ):
+                    setattr(analyzed, field, getattr(item, field))
                 analyzed_items.append(analyzed)
             except Exception as exc:
                 logger.warning("GitHub analysis failed [%s]: %s", item.repo_name, exc)
@@ -477,138 +516,90 @@ class GitHubAgent:
             return tuple(query.strip() for query in settings.github_search_queries.split(";") if query.strip())
         return self.DEFAULT_SEARCH_QUERIES
 
-    async def search_repository_candidates(self) -> list[dict[str, Any]]:
-        """Search recently-created and recently-updated research repositories."""
+    async def search_popular_active_candidates(self) -> list[dict[str, Any]]:
+        """Search recently-pushed relevant repositories as a bounded fallback."""
         if not self.client:
             return []
 
-        cutoff = (date.today() - timedelta(days=settings.github_new_project_days)).isoformat()
+        cutoff = (date.today() - timedelta(days=settings.github_active_project_days)).isoformat()
         queries = self._search_queries()
-        channel_limit = max(1, settings.github_candidate_limit // 2)
-        per_query = max(1, (channel_limit + max(len(queries), 1) - 1) // max(len(queries), 1))
+        per_query = max(1, settings.github_candidate_limit // max(len(queries), 1))
 
-        def run_search(query: str, qualifier: str) -> list[Repository]:
+        def run_search(query: str) -> list[Repository]:
             results = self.client.search_repositories(
-                query=f"{query} {qualifier}:>={cutoff}",
-                sort="updated",
+                query=f"{query} pushed:>={cutoff}",
+                sort="stars",
                 order="desc",
             )
             return list(results[:per_query])
 
-        candidates_by_channel: dict[str, dict[int, dict[str, Any]]] = {
-            "new": {},
-            "updated": {},
-        }
+        candidates: dict[int, dict[str, Any]] = {}
         for query in queries:
-            for channel, qualifier in (("new", "created"), ("updated", "pushed")):
-                try:
-                    repos = await asyncio.get_event_loop().run_in_executor(None, run_search, query, qualifier)
-                except GithubException as exc:
-                    logger.warning("GitHub search failed [%s/%s]: %s", channel, query, exc)
-                    continue
-                for repo in repos:
-                    candidates_by_channel[channel][repo.id] = {
-                        "repo_id": repo.id,
-                        "full_name": repo.full_name,
-                        "url": repo.html_url,
-                        "description": repo.description or "",
-                        "language": repo.language or "Unknown",
-                        "stars_today": 0,
-                        "stars": repo.stargazers_count,
-                        "forks": repo.forks_count,
-                        "created_at": repo.created_at.isoformat() if repo.created_at else None,
-                        "updated_at": repo.updated_at.isoformat() if repo.updated_at else None,
-                        "topics": [],
-                        "channel": channel,
-                        "repo": repo,
-                    }
-
-        candidates: list[dict[str, Any]] = []
-        for channel in ("new", "updated"):
-            channel_candidates = sorted(
-                candidates_by_channel[channel].values(),
-                key=lambda item: (item.get("updated_at") or "", item.get("stars", 0)),
-                reverse=True,
-            )
-            candidates.extend(channel_candidates[:channel_limit])
-        return candidates[: settings.github_candidate_limit]
-
-    async def _fetch_bounded_trending(
-        self,
-        time_range: Literal["daily", "weekly", "monthly"],
-    ) -> list[dict[str, Any]]:
-        try:
-            return await asyncio.wait_for(
-                self.fetch_trending_repos(time_range=time_range),
-                timeout=settings.github_trending_timeout_seconds,
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "GitHub Trending timed out after %.1fs; continuing with Repository Search",
-                settings.github_trending_timeout_seconds,
-            )
-            return []
-
-    async def get_research_repos(
-        self,
-        time_range: Literal["daily", "weekly", "monthly"] = "daily",
-    ) -> List[GitHubDigestItem]:
-        """Collect and grade bounded candidates without running model analysis."""
-        self._analysis_context = {}
-        trending_result, search_result = await asyncio.gather(
-            self._fetch_bounded_trending(time_range),
-            self.search_repository_candidates(),
-            return_exceptions=True,
-        )
-        if isinstance(trending_result, BaseException):
-            logger.warning("GitHub Trending failed: %s", trending_result)
-            trending_data = []
-        else:
-            trending_data = trending_result
-        if isinstance(search_result, BaseException):
-            logger.warning("GitHub Repository Search failed: %s", search_result)
-            search_data = []
-        else:
-            search_data = search_result
-
-        for item in trending_data:
-            item["channel"] = "trending"
-        merged: dict[str, dict[str, Any]] = {}
-        for candidate in [*trending_data, *search_data]:
-            key = str(candidate.get("full_name") or "").lower()
-            if not key:
+            try:
+                repos = await asyncio.get_event_loop().run_in_executor(None, run_search, query)
+            except GithubException as exc:
+                logger.warning("GitHub fallback search failed [%s]: %s", query, exc)
                 continue
-            current = merged.get(key)
-            if current is None or candidate.get("channel") == "new":
-                merged[key] = candidate
+            for repo in repos:
+                candidates[repo.id] = {
+                    "repo_id": repo.id,
+                    "full_name": repo.full_name,
+                    "url": repo.html_url,
+                    "description": repo.description or "",
+                    "language": repo.language or "Unknown",
+                    "stars_today": 0,
+                    "recent_stars": 0,
+                    "recent_star_period_days": 1,
+                    "recent_star_velocity": 0.0,
+                    "trending_rank": None,
+                    "trending_period": None,
+                    "stars": repo.stargazers_count,
+                    "forks": repo.forks_count,
+                    "watchers": getattr(repo, "subscribers_count", 0) or 0,
+                    "open_issues": repo.open_issues_count or 0,
+                    "created_at": repo.created_at.isoformat() if repo.created_at else None,
+                    "updated_at": repo.updated_at.isoformat() if repo.updated_at else None,
+                    "topics": [],
+                    "source_channel": "search",
+                    "channel": "search",
+                    "repo": repo,
+                }
 
-        channel_queues: dict[str, list[dict[str, Any]]] = {}
-        for channel in ("new", "updated", "trending"):
-            channel_queues[channel] = sorted(
-                (item for item in merged.values() if item.get("channel") == channel),
-                key=lambda item: (
-                    item.get("updated_at") or "",
-                    item.get("stars_today", 0),
-                    item.get("stars", 0),
-                ),
-                reverse=True,
-            )
+        return sorted(
+            candidates.values(),
+            key=lambda item: (item.get("stars", 0), item.get("updated_at") or ""),
+            reverse=True,
+        )[: settings.github_candidate_limit]
 
-        inspection_pool: list[dict[str, Any]] = []
-        while len(inspection_pool) < settings.github_candidate_limit:
-            added = False
-            for channel in ("new", "updated", "trending"):
-                if channel_queues[channel]:
-                    inspection_pool.append(channel_queues[channel].pop(0))
-                    added = True
-                    if len(inspection_pool) == settings.github_candidate_limit:
-                        break
-            if not added:
-                break
+    async def fetch_recent_issue_comment_count(self, repo: Repository) -> Optional[int]:
+        """Count a bounded sample of recent Issue/PR comments."""
+        limit = max(0, settings.github_recent_comment_limit)
+        if limit == 0:
+            return 0
+        since = datetime.now(timezone.utc) - timedelta(days=settings.github_social_window_days)
 
+        def count_comments() -> int:
+            comments = repo.get_issues_comments(since=since)
+            count = 0
+            for _ in comments:
+                count += 1
+                if count >= limit:
+                    break
+            return count
+
+        try:
+            return await asyncio.get_event_loop().run_in_executor(None, count_comments)
+        except Exception as exc:
+            logger.warning("获取近期 Issue/PR 评论失败 [%s]: %s", repo.full_name, exc)
+            return None
+
+    async def _grade_candidates(
+        self,
+        candidates: list[dict[str, Any]],
+        seen_repo_ids: set[int],
+    ) -> list[tuple[dict[str, Any], Repository, dict[str, Any], str, set[str], list[str]]]:
         graded: list[tuple[dict[str, Any], Repository, dict[str, Any], str, set[str], list[str]]] = []
-        seen_repo_ids: set[int] = set()
-        for repo_info in inspection_pool:
+        for repo_info in candidates:
             try:
                 repo = repo_info.get("repo") or await self.get_repo_details_from_api(repo_info["full_name"])
                 if not repo:
@@ -618,22 +609,88 @@ class GitHubAgent:
                     continue
                 seen_repo_ids.add(repo_id)
                 repo_info["repo_id"] = repo_id
+                repo_info["stars"] = repo.stargazers_count
+                repo_info["forks"] = repo.forks_count
+                repo_info["watchers"] = getattr(repo, "subscribers_count", 0) or 0
+                repo_info["open_issues"] = repo.open_issues_count or 0
                 details = await self.fetch_repo_details(repo)
                 repo_info["topics"] = list(details.get("topics") or [])
+                if not self.is_ai_related(repo_info, details):
+                    continue
+                repo_info["recent_issue_comments"] = await self.fetch_recent_issue_comment_count(repo)
                 grade, evidence, topics = self.candidate_quality(repo_info, details)
                 if grade == "C":
                     continue
                 graded.append((repo_info, repo, details, grade, evidence, topics))
             except Exception as exc:
                 logger.warning("GitHub candidate failed [%s]: %s", repo_info.get("full_name"), exc)
+        return graded
+
+    async def get_research_repos(
+        self,
+        time_range: Literal["daily", "weekly", "monthly"] = "daily",
+    ) -> List[GitHubDigestItem]:
+        """Collect and grade bounded candidates without running model analysis."""
+        self._analysis_context = {}
+        try:
+            trending_data = await self.fetch_trending_repos(time_range=time_range)
+        except Exception as exc:
+            logger.warning("GitHub Trending failed: %s", exc)
+            trending_data = []
+
+        trending_by_name: dict[str, dict[str, Any]] = {}
+        for item in trending_data:
+            item["channel"] = "trending"
+            item["source_channel"] = "trending"
+            key = str(item.get("full_name") or "").lower()
+            if key:
+                trending_by_name[key] = item
+
+        # This order decides which Trending items receive bounded API enrichment;
+        # final output ordering is applied after grading with all social metrics.
+        trending_candidates = sorted(
+            trending_by_name.values(),
+            key=lambda item: (
+                -(item.get("trending_rank") or 10_000),
+                item.get("recent_star_velocity", 0.0),
+            ),
+            reverse=True,
+        )
+        trending_budget = min(
+            len(trending_candidates),
+            max(settings.target_items, settings.github_candidate_limit - settings.target_items),
+        )
+        seen_repo_ids: set[int] = set()
+        graded = await self._grade_candidates(
+            trending_candidates[:trending_budget],
+            seen_repo_ids,
+        )
+
+        remaining_budget = max(0, settings.github_candidate_limit - trending_budget)
+        if len(graded) < settings.target_items and remaining_budget:
+            try:
+                search_candidates = await self.search_popular_active_candidates()
+            except Exception as exc:
+                logger.warning("GitHub fallback Repository Search failed: %s", exc)
+                search_candidates = []
+            graded.extend(
+                await self._grade_candidates(
+                    search_candidates[:remaining_budget],
+                    seen_repo_ids,
+                )
+            )
 
         graded.sort(
             key=lambda row: (
                 row[3] == "A",
-                row[0].get("channel") == "new",
+                row[0].get("source_channel") == "trending",
+                row[0].get("recent_star_velocity", 0.0),
+                row[0].get("recent_issue_comments") if row[0].get("recent_issue_comments") is not None else -1,
+                row[0].get("stars", 0),
+                row[0].get("forks", 0) + row[0].get("watchers", 0) + row[0].get("open_issues", 0),
                 len(row[4]),
                 row[0].get("updated_at") or "",
-                row[0].get("stars_today", 0),
+                str(row[0].get("full_name") or "").lower(),
             ),
             reverse=True,
         )
@@ -647,6 +704,15 @@ class GitHubAgent:
                     stars_today=repo_info.get("stars_today", 0),
                     deep_analysis=False,
                 )
+                item.watchers = repo_info.get("watchers", 0)
+                item.open_issues = repo_info.get("open_issues", 0)
+                item.recent_issue_comments = repo_info.get("recent_issue_comments")
+                item.source_channel = repo_info.get("source_channel", "legacy")
+                item.trending_rank = repo_info.get("trending_rank")
+                item.trending_period = repo_info.get("trending_period")
+                item.recent_stars = repo_info.get("recent_stars", 0)
+                item.recent_star_period_days = repo_info.get("recent_star_period_days", 1)
+                item.recent_star_velocity = repo_info.get("recent_star_velocity", 0.0)
                 item.research_topics = topics
                 item.quality_evidence = sorted(evidence)
                 item.quality_grade = grade

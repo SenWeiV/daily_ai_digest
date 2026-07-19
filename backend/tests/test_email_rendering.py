@@ -4,9 +4,19 @@ from app.schemas import ArxivDigestItem, GitHubDigestItem, YouTubeDigestItem
 from app.services.email_service import EmailService
 
 
-def test_email_renders_arxiv_without_changing_youtube_section():
+def test_email_renders_arxiv_without_changing_youtube_section(monkeypatch):
+    monkeypatch.setattr("app.services.email_service.settings.github_social_window_days", 14)
     service = EmailService()
-    github = [GitHubDigestItem(repo_name="org/repo", repo_url="https://github.com/org/repo", stars=3)]
+    github = [
+        GitHubDigestItem(
+            repo_name="org/repo",
+            repo_url="https://github.com/org/repo",
+            stars=3000,
+            trending_period="weekly",
+            recent_stars=700,
+            recent_issue_comments=12,
+        )
+    ]
     arxiv = [
         ArxivDigestItem(
             arxiv_id="2501.01234",
@@ -45,8 +55,12 @@ def test_email_renders_arxiv_without_changing_youtube_section():
 
     assert "arXiv 精选 1" in html
     assert "A useful paper" in html
+    assert "本周 +700" in html
+    assert "近14天评论 12" in html
     assert "Existing YouTube item" in html
     assert "arXiv 精选 1" in text
+    assert "本周+700" in text
+    assert "近14天评论 12" in text
     assert "Existing YouTube item" in text
 
 
@@ -68,3 +82,24 @@ def test_email_escapes_untrusted_arxiv_feed_fields():
     assert "<script>" not in html
     assert "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;" in html
     assert "A &lt;b&gt;method&lt;/b&gt; &amp; evaluation." in html
+
+
+def test_email_escapes_untrusted_github_fields():
+    service = EmailService()
+    repo = GitHubDigestItem(
+        repo_name='<img src=x onerror="alert(1)">',
+        repo_url='https://github.com/org/repo?x="bad"',
+        stars=100,
+        description="A <b>benchmark</b> & toolkit",
+        summary="Summary <script>alert(1)</script>",
+        key_innovations=["Safer <tag>"],
+    )
+
+    html = service._generate_html_template(date(2026, 7, 15), [repo], [])
+
+    assert "<img src=x" not in html
+    assert "<script>" not in html
+    assert "<b>benchmark</b>" not in html
+    assert "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;" in html
+    assert "A &lt;b&gt;benchmark&lt;/b&gt; &amp; toolkit" in html
+    assert "Safer &lt;tag&gt;" in html

@@ -57,31 +57,46 @@ class EmailService:
         
         # GitHub 项目列表
         github_html = ""
+        period_labels = {"daily": "今日", "weekly": "本周", "monthly": "本月"}
         for i, item in enumerate(github_items, 1):
-            innovations = "".join([f"<li>{p}</li>" for p in item.key_innovations[:3]]) if item.key_innovations else ""
+            innovations = "".join(f"<li>{escape(point)}</li>" for point in item.key_innovations[:3])
+            repo_url = escape(item.repo_url, quote=True)
+            repo_name = escape(item.repo_name)
+            language = escape(item.main_language or "Unknown")
+            description_text = item.description[:100] + "..." if item.description and len(item.description) > 100 else item.description or ""
+            description = escape(description_text)
+            summary = escape(item.summary or "暂无总结")
+            why_trending = escape(item.why_trending or "暂无分析")
+            practical_value = escape(item.practical_value or "暂无")
+            period_label = period_labels.get(item.trending_period, "近期")
+            recent_stars = item.recent_stars or item.stars_today
+            recent_text = f" · {period_label} +{format_number(recent_stars)}" if recent_stars > 0 else ""
+            comments_text = (
+                f" · 近{settings.github_social_window_days}天评论 {format_number(item.recent_issue_comments)}"
+                if item.recent_issue_comments is not None
+                else ""
+            )
             github_html += f"""
             <div style="background: #f8f9fa; border-radius: 8px; padding: 16px; margin-bottom: 16px; border-left: 4px solid #2ea44f;">
                 <h3 style="margin: 0 0 8px 0; color: #24292f;">
-                    {i}. <a href="{item.repo_url}" style="color: #0969da; text-decoration: none;">{item.repo_name}</a>
-                    <span style="color: #57606a; font-size: 14px; font-weight: normal;">
-                        ⭐ {format_number(item.stars)} {f'(+{item.stars_today})' if item.stars_today > 0 else ''}
-                    </span>
+                    {i}. <a href="{repo_url}" style="color: #0969da; text-decoration: none;">{repo_name}</a>
                 </h3>
                 <p style="color: #57606a; margin: 0 0 8px 0; font-size: 14px;">
-                    {item.main_language or 'Unknown'} • {item.description[:100] + '...' if item.description and len(item.description) > 100 else item.description or ''}
+                    ⭐ {format_number(item.stars)}{recent_text}{comments_text} · Fork {format_number(item.forks)}
                 </p>
+                <p style="color: #57606a; margin: 0 0 8px 0; font-size: 14px;">{language} • {description}</p>
                 <div style="margin: 12px 0;">
                     <strong style="color: #24292f;">📝 项目总结:</strong>
-                    <p style="margin: 4px 0; color: #24292f;">{item.summary or '暂无总结'}</p>
+                    <p style="margin: 4px 0; color: #24292f;">{summary}</p>
                 </div>
                 <div style="margin: 12px 0;">
                     <strong style="color: #24292f;">🔥 为什么火:</strong>
-                    <p style="margin: 4px 0; color: #24292f;">{item.why_trending or '暂无分析'}</p>
+                    <p style="margin: 4px 0; color: #24292f;">{why_trending}</p>
                 </div>
                 {f'<div style="margin: 12px 0;"><strong style="color: #24292f;">💡 关键创新:</strong><ul style="margin: 4px 0; padding-left: 20px; color: #24292f;">{innovations}</ul></div>' if innovations else ''}
                 <div style="margin: 12px 0;">
                     <strong style="color: #24292f;">🎯 实用价值:</strong>
-                    <p style="margin: 4px 0; color: #24292f;">{item.practical_value or '暂无'}</p>
+                    <p style="margin: 4px 0; color: #24292f;">{practical_value}</p>
                 </div>
             </div>
             """
@@ -243,9 +258,18 @@ class EmailService:
             "",
         ])
         
+        period_labels = {"daily": "今日", "weekly": "本周", "monthly": "本月"}
         for i, item in enumerate(github_items, 1):
+            recent_stars = item.recent_stars or item.stars_today
+            period_label = period_labels.get(item.trending_period, "近期")
+            momentum = f" | {period_label}+{format_number(recent_stars)}" if recent_stars > 0 else ""
+            comments = (
+                f" | 近{settings.github_social_window_days}天评论 {format_number(item.recent_issue_comments)}"
+                if item.recent_issue_comments is not None
+                else ""
+            )
             lines.extend([
-                f"{i}. {item.repo_name} ⭐{format_number(item.stars)}",
+                f"{i}. {item.repo_name} ⭐{format_number(item.stars)}{momentum}{comments}",
                 f"   链接: {item.repo_url}",
                 f"   总结: {item.summary or '暂无'}",
                 f"   为什么火: {item.why_trending or '暂无'}",

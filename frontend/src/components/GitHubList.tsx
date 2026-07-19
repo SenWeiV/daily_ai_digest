@@ -1,4 +1,4 @@
-import { Star, GitFork, ExternalLink, Code, Lightbulb, TrendingUp } from 'lucide-react'
+import { Star, GitFork, ExternalLink, Code, Lightbulb, MessageCircle, TrendingUp } from 'lucide-react'
 import type { GitHubDigestItem } from '../types'
 
 interface GitHubListProps {
@@ -14,6 +14,14 @@ function formatNumber(num: number): string {
     return (num / 1000).toFixed(1) + 'K'
   }
   return num.toString()
+}
+
+function recentStarsLabel(item: GitHubDigestItem): string | null {
+  const recentStars = item.recent_stars || item.stars_today
+  if (recentStars <= 0) return null
+  const labels = { daily: '今日', weekly: '本周', monthly: '本月' }
+  const period = item.trending_period ? labels[item.trending_period] : '近期'
+  return `${period} +${formatNumber(recentStars)}`
 }
 
 function GitHubList({ items, onItemClick }: GitHubListProps) {
@@ -57,14 +65,23 @@ function GitHubList({ items, onItemClick }: GitHubListProps) {
             </div>
             {/* Star 信息 */}
             <div className="flex items-center space-x-4 ml-4">
-              <div className="flex items-center space-x-1 text-yellow-500">
+              <div className="flex items-center space-x-1 text-yellow-500" title="总 Star">
                 <Star className="w-5 h-5 fill-current" />
                 <span className="font-semibold">{formatNumber(item.stars)}</span>
-                {item.stars_today > 0 && (
-                  <span className="text-green-500 text-sm">(+{item.stars_today})</span>
-                )}
               </div>
-              <div className="flex items-center space-x-1 text-gray-500">
+              {recentStarsLabel(item) && (
+                <div className="flex items-center space-x-1 text-green-600" title="Trending 周期新增 Star">
+                  <TrendingUp className="w-4 h-4" />
+                  <span className="text-sm font-medium">{recentStarsLabel(item)}</span>
+                </div>
+              )}
+              {item.recent_issue_comments !== null && (
+                <div className="flex items-center space-x-1 text-blue-600" title="近期 Issue/PR 评论">
+                  <MessageCircle className="w-4 h-4" />
+                  <span className="text-sm">{formatNumber(item.recent_issue_comments)}</span>
+                </div>
+              )}
+              <div className="flex items-center space-x-1 text-gray-500" title="Fork">
                 <GitFork className="w-4 h-4" />
                 <span className="text-sm">{formatNumber(item.forks)}</span>
               </div>

@@ -17,7 +17,22 @@ def test_arxiv_persistence_and_legacy_empty_default(tmp_path):
         await init_database()
         record = DigestRecord(
             digest_date=date(2026, 7, 15),
-            github_data=[GitHubDigestItem(repo_name="org/repo", repo_url="https://github.com/org/repo", stars=1)],
+            github_data=[
+                GitHubDigestItem(
+                    repo_name="org/repo",
+                    repo_url="https://github.com/org/repo",
+                    stars=1,
+                    source_channel="trending",
+                    trending_rank=2,
+                    trending_period="weekly",
+                    recent_stars=700,
+                    recent_star_period_days=7,
+                    recent_star_velocity=100.0,
+                    recent_issue_comments=12,
+                    watchers=8,
+                    open_issues=15,
+                )
+            ],
             arxiv_data=[
                 ArxivDigestItem(
                     arxiv_id="2501.01234",
@@ -31,6 +46,9 @@ def test_arxiv_persistence_and_legacy_empty_default(tmp_path):
             loaded = await DigestRecordModel.get_by_date(db, record.digest_date)
             assert loaded is not None
             assert loaded.arxiv_data[0].arxiv_id == "2501.01234"
+            assert loaded.github_data[0].trending_period == "weekly"
+            assert loaded.github_data[0].recent_stars == 700
+            assert loaded.github_data[0].recent_issue_comments == 12
             history = await DigestRecordModel.get_history_by_type(db, "daily")
             assert history[0].arxiv_count == 1
 

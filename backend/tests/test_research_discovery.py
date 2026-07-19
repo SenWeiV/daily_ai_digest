@@ -8,11 +8,13 @@ from app.agents.arxiv_agent import ArxivAgent
 from app.agents.github_agent import GitHubAgent
 from app.content_profile import (
     extract_explicit_arxiv_ids,
+    github_social_grade,
     is_research_relevant,
     matching_profiles,
     quality_grade,
     value_evidence,
 )
+from app.config import Settings
 from app.schemas import ArxivDigestItem, GitHubDigestItem
 from app.services.content_selector import select_research_items
 
@@ -148,7 +150,7 @@ def test_root_source_tree_counts_as_implementation_evidence():
     assert {"implementation", "artifacts_or_experiments"} <= evidence
 
 
-def test_search_candidates_are_bounded_across_channels(monkeypatch):
+def test_popular_active_search_is_bounded_and_never_queries_created(monkeypatch):
     class FakeRepo:
         def __init__(self, repo_id: int):
             self.id = repo_id
@@ -157,29 +159,32 @@ def test_search_candidates_are_bounded_across_channels(monkeypatch):
             self.description = "vision-language benchmark implementation"
             self.language = "Python"
             self.stargazers_count = repo_id
-            self.forks_count = 0
+            self.forks_count = 12
+            self.subscribers_count = 8
+            self.open_issues_count = 15
             self.created_at = datetime(2026, 7, 1)
             self.updated_at = datetime(2026, 7, 15)
 
     class FakeClient:
         def __init__(self):
-            self.queries = []
+            self.calls = []
 
         def search_repositories(self, query, sort, order):
-            self.queries.append(query)
-            offset = 100 if "pushed:" in query else 0
-            return [FakeRepo(offset + index) for index in range(1, 5)]
+            self.calls.append((query, sort, order))
+            return [FakeRepo(index) for index in range(1, 5)]
 
     agent = GitHubAgent()
     agent.client = FakeClient()
     monkeypatch.setattr("app.agents.github_agent.settings.github_candidate_limit", 6)
     monkeypatch.setattr("app.agents.github_agent.settings.github_search_queries", "q1;q2")
 
-    candidates = asyncio.run(agent.search_repository_candidates())
+    candidates = asyncio.run(agent.search_popular_active_candidates())
 
     assert len(candidates) <= 6
-    assert {item["channel"] for item in candidates} == {"new", "updated"}
-    assert len(agent.client.queries) == 4
+    assert {item["source_channel"] for item in candidates} == {"search"}
+    assert len(agent.client.calls) == 2
+    assert all("pushed:" in query and "created:" not in query for query, _, _ in agent.client.calls)
+    assert all(sort == "stars" and order == "desc" for _, sort, order in agent.client.calls)
 
 
 def test_model_analysis_is_bounded_by_shared_selection():
@@ -218,23 +223,29 @@ def test_arxiv_atom_parsing_reads_namespaced_summary_and_category_terms():
     assert item.quality_grade == "A"
 
 
-def test_github_channels_deduplicate_by_numeric_repository_id():
+def test_fallback_candidates_deduplicate_by_numeric_repository_id():
     class FakeRepo:
         id = 42
         full_name = "org/new-name"
+        stargazers_count = 5000
+        forks_count = 50
+        subscribers_count = 25
+        open_issues_count = 30
 
     repo = FakeRepo()
     agent = GitHubAgent()
     agent.fetch_trending_repos = AsyncMock(return_value=[])
-    agent.search_repository_candidates = AsyncMock(
+    agent.search_popular_active_candidates = AsyncMock(
         return_value=[
-            {"repo_id": 42, "full_name": "org/new-name", "channel": "new", "repo": repo},
-            {"repo_id": 42, "full_name": "org/old-name", "channel": "updated", "repo": repo},
+            {"repo_id": 42, "full_name": "org/new-name", "source_channel": "search", "repo": repo},
+            {"repo_id": 42, "full_name": "org/old-name", "source_channel": "search", "repo": repo},
         ]
     )
     agent.fetch_repo_details = AsyncMock(return_value={"readme_content": "readme", "topics": []})
-    agent.candidate_quality = Mock(return_value=("A", {"implementation", "substantive_readme"}, ["agentic"]))
-    candidate = github_item("org/new-name", "A")
+    agent.is_ai_related = Mock(return_value=True)
+    agent.fetch_recent_issue_comment_count = AsyncMock(return_value=12)
+    agent.candidate_quality = Mock(return_value=("B", {"recent_conversation"}, ["agentic"]))
+    candidate = github_item("org/new-name", "B")
     agent.analyze_repo = AsyncMock(return_value=candidate)
 
     results = asyncio.run(agent.get_research_repos())
@@ -248,15 +259,18 @@ def test_unrelated_trending_candidate_is_not_used_as_fallback():
     class FakeRepo:
         id = 7
         full_name = "org/unrelated"
+        stargazers_count = 100_000
+        forks_count = 500
+        subscribers_count = 100
+        open_issues_count = 200
 
     repo = FakeRepo()
     agent = GitHubAgent()
     agent.fetch_trending_repos = AsyncMock(
-        return_value=[{"full_name": repo.full_name, "channel": "trending", "repo": repo}]
+        return_value=[{"full_name": repo.full_name, "source_channel": "trending", "repo": repo}]
     )
-    agent.search_repository_candidates = AsyncMock(return_value=[])
+    agent.search_popular_active_candidates = AsyncMock(return_value=[])
     agent.fetch_repo_details = AsyncMock(return_value={"readme_content": "generic utility", "topics": []})
-    agent.candidate_quality = Mock(return_value=("C", set(), []))
     agent.analyze_repo = AsyncMock()
 
     results = asyncio.run(agent.get_research_repos())
@@ -299,35 +313,85 @@ def test_arxiv_feed_failure_does_not_drop_other_categories(monkeypatch):
     assert [item.arxiv_id for item in items] == ["2501.08888"]
 
 
-def test_trending_timeout_degrades_without_blocking_search(monkeypatch):
-    async def slow_trending(time_range):
-        await asyncio.sleep(1)
-        return [{"full_name": "org/late"}]
-
+def test_trending_uses_one_global_attempt_budget_and_cycles_access_methods(monkeypatch):
     agent = GitHubAgent()
-    agent.fetch_trending_repos = AsyncMock(side_effect=slow_trending)
-    monkeypatch.setattr("app.agents.github_agent.settings.github_trending_timeout_seconds", 0.01)
+    agent._build_fallback_urls = Mock(return_value=[("direct", None), ("proxy", "http://proxy")])
+    agent._fetch_single_url = AsyncMock(return_value=(False, [], RuntimeError("unavailable")))
+    monkeypatch.setattr("app.agents.github_agent.settings.github_trending_max_attempts", 10)
+    monkeypatch.setattr("app.agents.github_agent.asyncio.sleep", AsyncMock())
 
-    result = asyncio.run(agent._fetch_bounded_trending("daily"))
+    result = asyncio.run(agent.fetch_trending_repos("daily"))
 
     assert result == []
-    agent.fetch_trending_repos.assert_awaited_once_with(time_range="daily")
+    assert agent._fetch_single_url.await_count == 10
+    attempted_urls = [call.args[0] for call in agent._fetch_single_url.await_args_list]
+    assert attempted_urls == ["direct", "proxy"] * 5
+    assert [call.kwargs["attempt_number"] for call in agent._fetch_single_url.await_args_list] == list(range(1, 11))
+
+
+def test_trending_client_errors_switch_access_method_without_backoff(monkeypatch):
+    request = httpx.Request("GET", "https://github.com/trending")
+    response = httpx.Response(403, request=request)
+    error = httpx.HTTPStatusError("forbidden", request=request, response=response)
+    agent = GitHubAgent()
+    agent._build_fallback_urls = Mock(return_value=[("direct", None), ("mirror", None)])
+    agent._fetch_single_url = AsyncMock(return_value=(False, [], error))
+    sleep = AsyncMock()
+    monkeypatch.setattr("app.agents.github_agent.settings.github_trending_max_attempts", 2)
+    monkeypatch.setattr("app.agents.github_agent.asyncio.sleep", sleep)
+
+    result = asyncio.run(agent.fetch_trending_repos("daily"))
+
+    assert result == []
+    assert [call.args[0] for call in agent._fetch_single_url.await_args_list] == ["direct", "mirror"]
+    sleep.assert_not_awaited()
+
+
+def test_trending_stops_after_first_success(monkeypatch):
+    agent = GitHubAgent()
+    agent._build_fallback_urls = Mock(return_value=[("direct", None), ("proxy", "http://proxy")])
+    agent._fetch_single_url = AsyncMock(
+        side_effect=[
+            (False, [], RuntimeError("direct unavailable")),
+            (True, [{"full_name": "org/repo"}], None),
+        ]
+    )
+    monkeypatch.setattr("app.agents.github_agent.asyncio.sleep", AsyncMock())
+
+    result = asyncio.run(agent.fetch_trending_repos("weekly"))
+
+    assert result == [{"full_name": "org/repo"}]
+    assert agent._fetch_single_url.await_count == 2
 
 
 def test_search_failure_preserves_qualified_trending_candidates():
     class FakeRepo:
         id = 91
         full_name = "org/trending"
+        stargazers_count = 250
+        forks_count = 20
+        subscribers_count = 15
+        open_issues_count = 12
 
     repo = FakeRepo()
     agent = GitHubAgent()
     agent.fetch_trending_repos = AsyncMock(
-        return_value=[{"full_name": repo.full_name, "repo": repo, "stars_today": 5}]
+        return_value=[
+            {
+                "full_name": repo.full_name,
+                "repo": repo,
+                "recent_stars": 50,
+                "recent_star_velocity": 50.0,
+                "trending_rank": 1,
+            }
+        ]
     )
-    agent.search_repository_candidates = AsyncMock(side_effect=RuntimeError("search unavailable"))
+    agent.search_popular_active_candidates = AsyncMock(side_effect=RuntimeError("search unavailable"))
     agent.fetch_repo_details = AsyncMock(return_value={"readme_content": "readme", "topics": []})
+    agent.is_ai_related = Mock(return_value=True)
+    agent.fetch_recent_issue_comment_count = AsyncMock(return_value=8)
     agent.candidate_quality = Mock(
-        return_value=("A", {"implementation", "substantive_readme"}, ["agentic"])
+        return_value=("A", {"trending_momentum", "recent_conversation"}, ["agentic"])
     )
     candidate = github_item(repo.full_name, "A")
     agent.analyze_repo = AsyncMock(return_value=candidate)
@@ -335,3 +399,214 @@ def test_search_failure_preserves_qualified_trending_candidates():
     results = asyncio.run(agent.get_research_repos())
 
     assert results == [candidate]
+    agent.search_popular_active_candidates.assert_awaited_once_with()
+
+
+def test_trending_parser_retains_period_rank_velocity_and_request_timeout(monkeypatch):
+    monkeypatch.setattr(
+        "app.agents.github_agent.settings.github_trending_attempt_timeout_seconds",
+        120.0,
+    )
+    html = """
+    <article class="Box-row">
+      <h2 class="h3"><a href="/org/repo">org / repo</a></h2>
+      <p class="col-9">Vision-language benchmark implementation</p>
+      <span itemprop="programmingLanguage">Python</span>
+      <span class="d-inline-block float-sm-right">700 stars this week</span>
+    </article>
+    """
+
+    class FakeResponse:
+        text = html
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        kwargs = None
+
+        def __init__(self, **kwargs):
+            FakeClient.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, headers):
+            return FakeResponse()
+
+    monkeypatch.setattr("app.agents.github_agent.httpx.AsyncClient", FakeClient)
+    agent = GitHubAgent()
+
+    success, repos, error = asyncio.run(
+        agent._fetch_single_url("https://github.com/trending", None, {}, "weekly", 1)
+    )
+
+    assert success is True and error is None
+    assert FakeClient.kwargs["timeout"] == 120.0
+    assert repos[0]["trending_rank"] == 1
+    assert repos[0]["trending_period"] == "weekly"
+    assert repos[0]["recent_stars"] == 700
+    assert repos[0]["recent_star_period_days"] == 7
+    assert repos[0]["recent_star_velocity"] == 100.0
+
+
+def test_recent_issue_comments_are_capped_and_failures_are_unavailable(monkeypatch):
+    class FakeRepo:
+        full_name = "org/repo"
+
+        def get_issues_comments(self, since):
+            return range(150)
+
+    agent = GitHubAgent()
+    monkeypatch.setattr("app.agents.github_agent.settings.github_recent_comment_limit", 100)
+    assert asyncio.run(agent.fetch_recent_issue_comment_count(FakeRepo())) == 100
+
+    class FailingRepo(FakeRepo):
+        def get_issues_comments(self, since):
+            raise RuntimeError("API unavailable")
+
+    assert asyncio.run(agent.fetch_recent_issue_comment_count(FailingRepo())) is None
+
+
+def test_social_grades_have_no_total_star_floor():
+    grade, evidence = github_social_grade(
+        relevant=True,
+        source_channel="trending",
+        recent_stars=25,
+        recent_issue_comments=7,
+        forks=1,
+        watchers=1,
+        open_issues=1,
+    )
+    assert grade == "A"
+    assert {"trending_momentum", "recent_conversation"} <= evidence
+
+    fallback_grade, _ = github_social_grade(
+        relevant=True,
+        source_channel="search",
+        recent_stars=0,
+        recent_issue_comments=12,
+        forks=100,
+        watchers=50,
+        open_issues=25,
+    )
+    assert fallback_grade == "B"
+
+    unrelated_grade, _ = github_social_grade(
+        relevant=False,
+        source_channel="trending",
+        recent_stars=10_000,
+        recent_issue_comments=100,
+        forks=10_000,
+        watchers=10_000,
+        open_issues=10_000,
+    )
+    assert unrelated_grade == "C"
+
+
+def test_trending_with_enough_qualified_items_does_not_search(monkeypatch):
+    class FakeRepo:
+        def __init__(self, index):
+            self.full_name = f"org/repo-{index}"
+
+    agent = GitHubAgent()
+    trending = [
+        {
+            "full_name": f"org/repo-{index}",
+            "trending_rank": index + 1,
+            "recent_star_velocity": 100 - index,
+        }
+        for index in range(10)
+    ]
+    graded = [
+        (
+            {**trending[index], "source_channel": "trending", "recent_issue_comments": 10, "stars": 1000},
+            FakeRepo(index),
+            {},
+            "A",
+            {"trending_momentum", "recent_conversation"},
+            ["agentic"],
+        )
+        for index in range(10)
+    ]
+    agent.fetch_trending_repos = AsyncMock(return_value=trending)
+    agent._grade_candidates = AsyncMock(return_value=graded)
+    agent.search_popular_active_candidates = AsyncMock(return_value=[])
+    agent.analyze_repo = AsyncMock(
+        side_effect=lambda repo, details, stars_today, deep_analysis: github_item(repo.full_name, "A")
+    )
+    monkeypatch.setattr("app.agents.github_agent.settings.target_items", 10)
+    monkeypatch.setattr("app.agents.github_agent.settings.github_candidate_limit", 24)
+
+    results = asyncio.run(agent.get_research_repos())
+
+    assert len(results) == 10
+    agent.search_popular_active_candidates.assert_not_awaited()
+
+
+def test_schema_and_config_social_defaults_are_backward_compatible():
+    item = GitHubDigestItem(repo_name="org/repo", repo_url="https://github.com/org/repo", stars=1)
+    assert item.source_channel == "legacy"
+    assert item.trending_rank is None
+    assert item.recent_issue_comments is None
+    assert item.recent_stars == 0
+    assert item.watchers == 0
+    assert Settings.model_fields["github_trending_attempt_timeout_seconds"].default == 120.0
+    assert Settings.model_fields["github_trending_max_attempts"].default == 10
+    assert Settings.model_fields["github_recent_comment_limit"].default == 100
+
+
+def test_recent_star_velocity_outranks_total_stars_and_comments_break_ties():
+    fast = github_item("org/fast", "A")
+    fast.source_channel = "trending"
+    fast.recent_star_velocity = 120.0
+    fast.recent_issue_comments = 6
+    fast.stars = 600
+
+    large = github_item("org/large", "A")
+    large.source_channel = "trending"
+    large.recent_star_velocity = 20.0
+    large.recent_issue_comments = 100
+    large.stars = 100_000
+
+    selected, _ = select_research_items([large, fast], [], target_items=1, max_items=1)
+    assert [item.repo_name for item in selected] == ["org/fast"]
+
+    more_discussed = github_item("org/discussed", "A")
+    more_discussed.source_channel = "trending"
+    more_discussed.recent_star_velocity = 120.0
+    more_discussed.recent_issue_comments = 20
+    more_discussed.stars = 500
+
+    selected, _ = select_research_items(
+        [fast, more_discussed],
+        [],
+        target_items=1,
+        max_items=1,
+    )
+    assert [item.repo_name for item in selected] == ["org/discussed"]
+
+
+def test_readme_and_implementation_do_not_create_social_proof():
+    rich_evidence = value_evidence(
+        {"description": "A concrete vision-language benchmark implementation with reproducible experiments."},
+        {
+            "readme_content": "vision-language benchmark " * 30,
+            "root_entries": ["src", "tests", "pyproject.toml"],
+        },
+    )
+    assert quality_grade(relevant=True, evidence=rich_evidence) == "A"
+
+    social_grade, _ = github_social_grade(
+        relevant=True,
+        source_channel="search",
+        recent_stars=0,
+        recent_issue_comments=0,
+        forks=0,
+        watchers=0,
+        open_issues=0,
+    )
+    assert social_grade == "C"
