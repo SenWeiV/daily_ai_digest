@@ -40,7 +40,9 @@
 
 ## 6. Production rollout
 
-- [ ] 6.1 Push the verified commits to the authoritative `origin/main` branch and confirm the frontend deployment workflow.
-- [ ] 6.2 Verify the current production Docker revision/data mount, tag a rollback image, and create an SQLite backup without exposing secrets.
-- [ ] 6.3 Deploy an isolated backend overlay retaining `/opt/daily_ai_digest/data`, then confirm revision, container health, database history, and scheduler state.
-- [ ] 6.4 Run a no-email non-daily production digest and verify Trending retry behavior, fallback behavior, social-proof payloads, final counts, execution log type, and next daily email slot.
+- [x] 6.1 Push the verified commits to the authoritative `origin/main` branch and confirm the frontend deployment workflow.
+- [x] 6.2 Verify the current production Docker revision/data mount, tag a rollback image, and create an SQLite backup without exposing secrets.
+- [x] 6.3 Deploy an isolated backend overlay retaining `/opt/daily_ai_digest/data`, then confirm revision, container health, database history, and scheduler state.
+- [x] 6.4 Run a no-email non-daily production digest and verify Trending retry behavior, fallback behavior, social-proof payloads, final counts, execution log type, and next daily email slot.
+
+> Production completed (2026-07-19): Docker Compose backend revision `2f74a3263e45a33cb2efeca22967137faef9c9c4` is healthy with `/opt/daily_ai_digest/data` mounted and rollback/database backups retained. A no-email weekly run succeeded in 1080.7 seconds: Trending succeeded on attempt 5/10, Search was not invoked, 10 GitHub items were all Trending (9 A, 1 B), recent-Star and bounded comment fields persisted, and the next daily email remained scheduled for `2026-07-19T20:00:00+08:00`.
