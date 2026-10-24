@@ -4,10 +4,13 @@
 
 import asyncio
 import logging
+
+from aiosmtplib import errors as smtp_errors
 from datetime import datetime, date, timedelta
 from typing import Optional, Tuple, List, Literal
 from zoneinfo import ZoneInfo
 
+from app.content_window import ContentWindow, content_window
 from app.config import settings
 from app.database import get_db
 from app.model_roles import role_usage
@@ -16,7 +19,7 @@ from app.models import DigestRecordModel, ExecutionLogModel
 from app.agents.github_agent import github_agent
 from app.agents.arxiv_agent import arxiv_agent
 from app.agents.gemini_analyzer import gemini_analyzer
-from app.services.email_service import email_service
+from app.services.email_service import PartialDeliveryError, email_service
 from app.services.content_selector import select_research_items
 from app.services.digest_assets import AssetBundle, build_assets, cleanup_old_renders
 
@@ -53,182 +56,141 @@ class DigestService:
         send_email: bool = True,
         force: bool = False,
         send_at: Optional[datetime] = None,
+        subject_suffix: Optional[str] = None,
+        message_id: Optional[str] = None,
     ) -> Tuple[bool, str, Optional[DigestRecord]]:
+        """Generate a period digest; only acknowledged delivery counts as sent.
+
+        A non-forced retry reuses definitively unsent content. Partial or uncertain
+        delivery requires mailbox review and an explicit forced resend.
         """
-        生成摘要（支持每日、每周、每月）
-        
-        Args:
-            digest_type: 摘要类型 - daily(每日), weekly(每周), monthly(每月)
-            target_date: 目标日期（日报默认昨天，周报/月报默认今天）
-            send_email: 是否发送邮件
-            force: 是否强制重新生成
-            send_at: 最早发送时间。提前开始整理，整理完等到这个时刻再发，
-                保证邮件准点到达；为空则整理完立即发送
-        
-        Returns:
-            (是否成功, 消息, 摘要记录)
-        """
+        if digest_type not in {"daily", "weekly", "monthly"}:
+            return False, "未知摘要类型", None
         if self.is_running:
             return False, "任务正在执行中，请稍后再试", None
-        
+
         self.is_running = True
         start_time = datetime.now()
+        if target_date is None and digest_type == "daily" and send_at is not None:
+            # Preparation may occur before midnight for an after-midnight delivery.
+            target_date = send_at.astimezone(ZoneInfo(settings.timezone)).date() - timedelta(days=1)
         target_date = target_date or default_target_date(digest_type)
-        
-        # 根据类型确定记录日期
+        record_date = target_date
         if digest_type == "weekly":
-            record_date = target_date - timedelta(days=target_date.weekday())  # 本周一
+            record_date -= timedelta(days=target_date.weekday())
         elif digest_type == "monthly":
-            record_date = target_date.replace(day=1)  # 本月1号
-        else:
-            record_date = target_date
-        
+            record_date = target_date.replace(day=1)
         execution_log = ExecutionLog(
-            execution_time=start_time,
-            status="running",
-            github_count=0,
+            execution_time=start_time, status="running", digest_type=digest_type,
         )
-        
+        digest_record = None
         try:
-            logger.info(f"开始生成 [{digest_type}] {record_date} 的摘要...")
-            # 每次运行独立计数，否则同一进程内多次运行会把上一次的调用算进来
             role_usage.reset()
-            
-            # 检查是否已有数据（使用组合键：日期+类型）
             async with get_db() as db:
                 existing = await DigestRecordModel.get_by_date_and_type(db, record_date, digest_type)
-                if existing and not force:
-                    logger.info(f"[{digest_type}] {record_date} 已有摘要数据，跳过生成")
-                    self.is_running = False
+            if existing and not force:
+                digest_record = existing
+                if not send_email or existing.email_sent:
                     return True, f"{digest_type}摘要已存在", existing
-            
-            github_items, arxiv_items = await self._collect_source_data(digest_type)
-            github_items, arxiv_items = select_research_items(
-                github_items,
-                arxiv_items,
-                target_items=settings.target_items,
-                max_items=settings.max_items,
-            )
-            github_items, arxiv_items = await asyncio.gather(
-                github_agent.analyze_selected_repos(github_items),
-                self._analyze_arxiv_items(arxiv_items),
-            )
-            
-            # 生成总结
-            daily_summary = None
-            if gemini_analyzer.is_available and (github_items or arxiv_items):
-                try:
-                    daily_summary = await gemini_analyzer.generate_period_summary(
-                        [item.model_dump() for item in github_items],
-                        [item.model_dump() for item in arxiv_items],
-                        period=digest_type
-                    )
-                except Exception as e:
-                    logger.error(f"生成总结失败: {e}")
-            
-            # 创建摘要记录
-            digest_record = DigestRecord(
-                digest_date=record_date,
-                digest_type=digest_type,
-                github_data=github_items,
-                arxiv_data=arxiv_items,
-                email_sent=False
-            )
-            
-            # 只有会走正式投递路径的运行才写入日报记录。临时探针常用
-            # send_email=False；如果把它也记成当天记录，晚上的 force=False
-            # 调度会误以为日报已经完成，从而跳过真正的邮件。
-            if send_email:
-                async with get_db() as db:
-                    await DigestRecordModel.create_with_type(db, digest_record)
-                    logger.info(f"[{digest_type}] 摘要数据已保存到数据库")
+                if existing.delivery_status in {"sending", "unknown", "partial"}:
+                    raise RuntimeError("已有投递结果待确认；请先核对收件箱，再决定是否强制重发")
+                github_items, arxiv_items = existing.github_data, existing.arxiv_data
+                daily_summary = None
+                logger.info("复用未投递摘要 [%s] %s", digest_type, record_date)
             else:
-                logger.info(f"[{digest_type}] 临时不发邮件运行，不写入日报记录")
+                window = content_window(digest_type, target_date, settings.timezone)
+                logger.info("生成 [%s] %s，内容窗口 [%s, %s)", digest_type, record_date, window.start, window.end)
+                github_items, arxiv_items = await self._collect_source_data(digest_type, window)
+                github_items, arxiv_items = select_research_items(
+                    github_items, arxiv_items,
+                    target_items=settings.target_items, max_items=settings.max_items,
+                )
+                github_items, arxiv_items = await asyncio.gather(
+                    github_agent.analyze_selected_repos(github_items),
+                    self._analyze_arxiv_items(arxiv_items),
+                )
+                daily_summary = None
+                if gemini_analyzer.is_available and (github_items or arxiv_items):
+                    try:
+                        daily_summary = await gemini_analyzer.generate_period_summary(
+                            [item.model_dump() for item in github_items],
+                            [item.model_dump() for item in arxiv_items], period=digest_type,
+                        )
+                    except Exception as exc:
+                        logger.warning("生成总结失败: %s", exc)
+                digest_record = DigestRecord(
+                    digest_date=record_date, digest_type=digest_type,
+                    github_data=github_items, arxiv_data=arxiv_items,
+                )
+                # Probes must never suppress the scheduled delivery.
+                if send_email:
+                    async with get_db() as db:
+                        await DigestRecordModel.create_with_type(db, digest_record)
 
-            # 发送邮件
-            email_sent = False
-            if send_email and email_service.is_configured:
+            execution_log.github_count = len(github_items)
+            if send_email:
+                if not email_service.is_configured:
+                    raise RuntimeError("邮件服务未配置，摘要尚未投递")
+                bundle = await self._build_assets(record_date, github_items, arxiv_items, daily_summary)
+                await self._wait_until(send_at)
+                await self._set_delivery_status(digest_record, "sending")
                 try:
-                    subject_suffix = {
-                        "daily": "每日",
-                        "weekly": "每周",
-                        "monthly": "每月"
-                    }[digest_type]
-
-                    # 资产先于发送：一封邮件带走正文、文案和全部通过质检的图，
-                    # 不拆信、不为迟到的资产补发第二封。宁可等，不能早发。
-                    bundle = await self._build_assets(
-                        record_date, github_items, arxiv_items, daily_summary
-                    )
-
-                    await self._wait_until(send_at)
-
-                    email_sent = await email_service.send_digest_email(
-                        digest_date=record_date,
-                        github_items=github_items,
-                        arxiv_items=arxiv_items,
-                        daily_summary=daily_summary,
-                        subject_suffix=subject_suffix,
-                        attachments=bundle.attachments,
+                    sent = await email_service.send_digest_email(
+                        digest_date=record_date, github_items=github_items,
+                        arxiv_items=arxiv_items, daily_summary=daily_summary,
+                        subject_suffix=subject_suffix or {"daily": "每日", "weekly": "每周", "monthly": "每月"}[digest_type],
+                        message_id=message_id, attachments=bundle.attachments,
                         copy_section_html=bundle.copy_section_html,
                         copy_section_text=bundle.copy_section_text,
                         withheld_html=bundle.withheld_html,
                     )
+                    if not sent:
+                        await self._set_delivery_status(digest_record, "failed")
+                        raise RuntimeError("SMTP 未接受邮件")
+                except PartialDeliveryError:
+                    await self._set_delivery_status(digest_record, "partial")
+                    raise
+                except (smtp_errors.SMTPAuthenticationError, smtp_errors.SMTPRecipientsRefused,
+                        smtp_errors.SMTPSenderRefused, smtp_errors.SMTPDataError,
+                        smtp_errors.SMTPConnectError, smtp_errors.SMTPConnectTimeoutError,
+                        smtp_errors.SMTPHeloError, smtp_errors.SMTPNotSupported):
+                    await self._set_delivery_status(digest_record, "failed")
+                    raise
+                except Exception:
+                    if digest_record.delivery_status == "sending":
+                        await self._set_delivery_status(digest_record, "unknown")
+                    raise
+                await self._set_delivery_status(digest_record, "sent")
 
-                    if email_sent:
-                        digest_record.email_sent = True
-                        digest_record.email_sent_at = datetime.now()
-                        async with get_db() as db:
-                            await DigestRecordModel.update_email_status(db, record_date, digest_type, True)
-                        logger.info("邮件发送成功")
-                    else:
-                        logger.warning("邮件发送失败")
-
-                except Exception as e:
-                    logger.error(f"邮件发送异常: {e}")
-            
-            # 记录执行结果
-            duration = (datetime.now() - start_time).total_seconds()
             execution_log.status = "success"
-            execution_log.github_count = len(github_items)
-            execution_log.duration_seconds = duration
-            execution_log.digest_type = digest_type
-            
-            async with get_db() as db:
-                await ExecutionLogModel.create(db, execution_log)
-            
-            self.last_execution = start_time
-            self.last_result = digest_record
-            
-            message = (
-                f"[{digest_type}] 摘要生成完成: GitHub {len(github_items)} 个, "
-                f"arXiv {len(arxiv_items)} 个"
-            )
-            if email_sent:
-                message += ", 邮件已发送"
-            
-            logger.info(message)
-            return True, message, digest_record
-            
-        except Exception as e:
-            logger.error(f"生成摘要失败: {e}")
-            
-            # 记录失败日志
-            execution_log.status = "failed"
-            execution_log.error_message = str(e)
             execution_log.duration_seconds = (datetime.now() - start_time).total_seconds()
-            execution_log.digest_type = digest_type
-            
             async with get_db() as db:
                 await ExecutionLogModel.create(db, execution_log)
-            
-            return False, f"生成摘要失败: {str(e)}", None
-            
+            self.last_execution, self.last_result = start_time, digest_record
+            message = f"[{digest_type}] 摘要生成完成: GitHub {len(github_items)} 个, arXiv {len(arxiv_items)} 个"
+            if digest_record.email_sent:
+                message += ", 邮件已发送"
+            return True, message, digest_record
+        except Exception as exc:
+            logger.error("摘要任务失败: %s", exc)
+            execution_log.status = "failed"
+            execution_log.error_message = str(exc)
+            execution_log.duration_seconds = (datetime.now() - start_time).total_seconds()
+            async with get_db() as db:
+                await ExecutionLogModel.create(db, execution_log)
+            return False, f"摘要任务失败: {exc}", digest_record
         finally:
-            # 成功与失败都要报账：失败的运行同样花了钱，隐藏它会让成本无法归因
             role_usage.log_summary()
             self.is_running = False
-    
+
+    @staticmethod
+    async def _set_delivery_status(record: DigestRecord, status: str) -> None:
+        async with get_db() as db:
+            await DigestRecordModel.update_delivery_status(db, record.digest_date, record.digest_type, status)
+        record.delivery_status = status
+        record.email_sent = status == "sent"
+        record.email_sent_at = datetime.now() if record.email_sent else None
+
     async def generate_daily_digest(
         self,
         target_date: Optional[date] = None,
@@ -294,11 +256,12 @@ class DigestService:
     async def _collect_source_data(
         self,
         digest_type: Literal["daily", "weekly", "monthly"],
+        window: Optional[ContentWindow] = None,
     ) -> tuple[List[GitHubDigestItem], List[ArxivDigestItem]]:
         """Collect all independent sources concurrently; selection happens afterwards."""
         github_items, arxiv_items = await asyncio.gather(
-            self._fetch_github_data(digest_type),
-            self._fetch_arxiv_data(),
+            self._fetch_github_data(digest_type, window) if window else self._fetch_github_data(digest_type),
+            self._fetch_arxiv_data(window) if window else self._fetch_arxiv_data(),
         )
         return github_items, arxiv_items
 
@@ -318,7 +281,8 @@ class DigestService:
 
     async def _fetch_github_data(
         self,
-        digest_type: Literal["daily", "weekly", "monthly"] = "daily"
+        digest_type: Literal["daily", "weekly", "monthly"] = "daily",
+        window: Optional[ContentWindow] = None,
     ) -> List[GitHubDigestItem]:
         """获取GitHub数据（根据类型使用不同时间范围）"""
         if not github_agent.is_available:
@@ -333,17 +297,17 @@ class DigestService:
                 "monthly": "monthly"
             }.get(digest_type, "daily")
             
-            return await github_agent.get_research_repos(time_range=time_range)
+            return await github_agent.get_research_repos(time_range=time_range, window=window)
         except Exception as e:
             logger.error(f"获取GitHub数据失败: {e}")
             return []
 
-    async def _fetch_arxiv_data(self) -> List[ArxivDigestItem]:
+    async def _fetch_arxiv_data(self, window: Optional[ContentWindow] = None) -> List[ArxivDigestItem]:
         """获取 arXiv 候选；失败不阻断其他来源。"""
         if not arxiv_agent.is_available:
             return []
         try:
-            return await arxiv_agent.fetch()
+            return await arxiv_agent.fetch(window=window)
         except Exception as e:
             logger.error(f"获取 arXiv 数据失败: {e}")
             return []

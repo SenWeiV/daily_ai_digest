@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS digest_records (
     arxiv_data TEXT,
     youtube_data TEXT,
     email_sent INTEGER DEFAULT 0,
+    delivery_status TEXT NOT NULL DEFAULT 'pending',
     email_sent_at TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -102,6 +103,11 @@ async def _run_migrations(db: aiosqlite.Connection):
         await db.commit()
         print("数据库迁移: 添加 digest_records.arxiv_data 列")
 
+    if 'delivery_status' not in columns:
+        await db.execute("ALTER TABLE digest_records ADD COLUMN delivery_status TEXT NOT NULL DEFAULT 'pending'")
+        await db.execute("UPDATE digest_records SET delivery_status = 'sent' WHERE email_sent = 1")
+        await db.commit()
+
     # 确保 digest_records 表有正确的 UNIQUE 约束
     await _ensure_unique_constraint(db)
 
@@ -134,6 +140,7 @@ async def _ensure_unique_constraint(db: aiosqlite.Connection):
             arxiv_data TEXT,
             youtube_data TEXT,
             email_sent INTEGER DEFAULT 0,
+            delivery_status TEXT NOT NULL DEFAULT 'pending',
             email_sent_at TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -142,7 +149,7 @@ async def _ensure_unique_constraint(db: aiosqlite.Connection):
         
         -- 复制数据（如果旧表存在数据）
         INSERT OR IGNORE INTO digest_records_new
-        SELECT id, digest_date, digest_type, github_data, arxiv_data, youtube_data, email_sent, email_sent_at, created_at, updated_at
+        SELECT id, digest_date, digest_type, github_data, arxiv_data, youtube_data, email_sent, delivery_status, email_sent_at, created_at, updated_at
         FROM digest_records;
         
         -- 删除旧表

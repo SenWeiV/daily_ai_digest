@@ -28,10 +28,26 @@ const api = axios.create({
   },
 });
 
+// Read access stays public. Never embed the administrator key in a Pages build.
+api.interceptors.request.use((config) => {
+  if (["post", "put", "patch", "delete"].includes(config.method || "")) {
+    let key = sessionStorage.getItem("digest-admin-key");
+    if (!key) {
+      key = window.prompt("此操作需要管理员密钥（仅在本次浏览器会话中保存）：");
+      if (!key?.trim()) throw new axios.CanceledError("已取消管理员操作");
+      key = key.trim();
+      sessionStorage.setItem("digest-admin-key", key);
+    }
+    config.headers.Authorization = `Bearer ${key}`;
+  }
+  return config;
+});
+
 // 响应拦截器
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    if (error.response?.status === 401) sessionStorage.removeItem("digest-admin-key");
     console.error("API Error:", error);
     return Promise.reject(error);
   },
@@ -48,14 +64,14 @@ export const digestApi = {
   },
 
   // 获取最新摘要
-  getLatest: async (): Promise<DigestRecord | null> => {
-    const response = await api.get<DigestRecord | null>("/digest/latest");
+  getLatest: async (digestType = "daily", signal?: AbortSignal): Promise<DigestRecord | null> => {
+    const response = await api.get<DigestRecord | null>("/digest/latest", { params: { digest_type: digestType }, signal });
     return response.data;
   },
 
   // 获取指定日期摘要
-  getByDate: async (date: string): Promise<DigestRecord> => {
-    const response = await api.get<DigestRecord>(`/digest/${date}`);
+  getByDate: async (date: string, digestType = "daily"): Promise<DigestRecord> => {
+    const response = await api.get<DigestRecord>(`/digest/${date}`, { params: { digest_type: digestType } });
     return response.data;
   },
 
@@ -82,8 +98,8 @@ export const digestApi = {
  */
 export const systemApi = {
   // 获取系统状态
-  getStatus: async (): Promise<SystemStatus> => {
-    const response = await api.get<SystemStatus>("/status");
+  getStatus: async (signal?: AbortSignal): Promise<SystemStatus> => {
+    const response = await api.get<SystemStatus>("/status", { signal });
     return response.data;
   },
 

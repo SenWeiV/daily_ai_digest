@@ -105,7 +105,8 @@ def test_no_email_probe_does_not_suppress_the_scheduled_run(monkeypatch):
             "daily", target_date=date(2026, 8, 3), send_email=True, force=False
         )
     )
-    assert scheduled[0] is True
+    # Requested delivery without SMTP configuration must report failure.
+    assert scheduled[0] is False
     assert len(created_records) == 1
     assert len(records) == 1
 

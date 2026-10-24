@@ -8,6 +8,7 @@ import ssl
 from html import escape
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import format_datetime, make_msgid
 from datetime import datetime, date
 from typing import List, Optional
 
@@ -20,6 +21,11 @@ from app.services.attachment_budget import Attachment
 from app.utils.helpers import format_number
 
 logger = logging.getLogger(__name__)
+
+
+class PartialDeliveryError(RuntimeError):
+    """DATA was accepted for some recipients; do not retry the whole message."""
+
 
 # 文件名后缀 → MIME 子类型。
 # 刻意不让 MIMEImage 去嗅探内容：嗅探失败时它抛 TypeError，那会让一张附件
@@ -301,6 +307,7 @@ class EmailService:
         copy_section_html: str = "",
         copy_section_text: str = "",
         withheld_html: str = "",
+        message_id: Optional[str] = None,
     ) -> bool:
         """
         发送每日/每周/每月摘要邮件
@@ -330,6 +337,8 @@ class EmailService:
             return False
         attachments = attachments or []
 
+        accepted = False
+        refused = {}
         try:
             # mixed 包 alternative：alternative 容器本身不能带附件，
             # 直接往它上面 attach 图片会让部分客户端把图片当成正文的替代版本，
@@ -340,6 +349,9 @@ class EmailService:
             msg["Subject"] = f"🤖 {subject_suffix} AI Digest - {digest_date.strftime('%Y-%m-%d')} | GitHub {len(github_items)} + arXiv {len(arxiv_items)}"
             msg["From"] = self.sender_email
             msg["To"] = ", ".join(recipients)
+            msg["Date"] = format_datetime(datetime.now().astimezone())
+            msg["Message-ID"] = message_id or make_msgid(domain=self.sender_email.rsplit('@', 1)[-1])
+            self.last_message_id = msg["Message-ID"]
 
             # 纯文本版本
             text_content = self._generate_plain_text(
@@ -409,29 +421,39 @@ class EmailService:
                     timeout=timeout,
                 ) as server:
                     await server.login(self.sender_email, self.app_password)
-                    await server.sendmail(self.sender_email, recipients, msg.as_string())
+                    result = await server.sendmail(self.sender_email, recipients, msg.as_string())
+                    refused = result[0] if result else {}
+                    accepted = True
             else:
                 # STARTTLS（Gmail 使用端口 587）
                 async with aiosmtplib.SMTP(
                     hostname=self.smtp_server,
                     port=self.smtp_port,
                     use_tls=False,
+                    start_tls=False,
                     timeout=timeout,
                 ) as server:
                     await server.starttls(context=context)
                     await server.login(self.sender_email, self.app_password)
-                    await server.sendmail(self.sender_email, recipients, msg.as_string())
+                    result = await server.sendmail(self.sender_email, recipients, msg.as_string())
+                    refused = result[0] if result else {}
+                    accepted = True
+
+            if refused:
+                raise PartialDeliveryError(f"部分收件人被拒收（{len(refused)}/{len(recipients)}）；请核对收件箱后处理，勿直接重发整封邮件")
             
             logger.info(f"邮件发送成功: {', '.join(recipients)}")
             return True
             
-        except aiosmtplib.errors.SMTPAuthenticationError as e:
-            logger.error(f"邮件认证失败: {e}")
-            raise
-        except aiosmtplib.errors.SMTPException as e:
-            logger.error(f"邮件发送失败: {e}")
+        except PartialDeliveryError:
             raise
         except Exception as e:
+            if accepted:
+                if refused:
+                    raise PartialDeliveryError(f"部分收件人被拒收（{len(refused)}/{len(recipients)}）") from e
+                # A failed QUIT cannot undo an acknowledged DATA transaction.
+                logger.warning("SMTP 已确认接收，关闭连接失败：%s", type(e).__name__)
+                return True
             logger.error(f"邮件发送异常: {e}")
             raise
     
@@ -485,19 +507,22 @@ class EmailService:
                     timeout=timeout,
                 ) as server:
                     await server.login(self.sender_email, self.app_password)
-                    await server.sendmail(self.sender_email, recipients, msg.as_string())
+                    result = await server.sendmail(self.sender_email, recipients, msg.as_string())
             else:
                 # STARTTLS（Gmail 使用端口 587）
                 async with aiosmtplib.SMTP(
                     hostname=self.smtp_server,
                     port=self.smtp_port,
                     use_tls=False,
+                    start_tls=False,
                     timeout=timeout,
                 ) as server:
                     await server.starttls(context=context)
                     await server.login(self.sender_email, self.app_password)
-                    await server.sendmail(self.sender_email, recipients, msg.as_string())
+                    result = await server.sendmail(self.sender_email, recipients, msg.as_string())
 
+            if result and result[0]:
+                raise PartialDeliveryError("测试邮件仅被部分收件人接受，请核对邮箱后处理")
             logger.info(f"测试邮件发送成功: {', '.join(recipients)}")
             return True
             

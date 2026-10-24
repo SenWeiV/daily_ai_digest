@@ -87,8 +87,8 @@ def test_legacy_unique_constraint_rebuild_preserves_data(tmp_path):
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
-                INSERT INTO digest_records (digest_date, digest_type, github_data, youtube_data)
-                VALUES ('2026-07-13', 'daily', '[]', '[]');
+                INSERT INTO digest_records (digest_date, digest_type, github_data, youtube_data, email_sent)
+                VALUES ('2026-07-13', 'daily', '[]', '[]', 1);
                 """
             )
 
@@ -104,6 +104,7 @@ def test_legacy_unique_constraint_rebuild_preserves_data(tmp_path):
             ).fetchone()
             assert row["digest_date"] == "2026-07-13"
             assert row["arxiv_data"] is None
+            assert row["email_sent"] == 1 and row["delivery_status"] == "sent"
             assert "UNIQUE(digest_date, digest_type)" in schema[0]
 
     try:

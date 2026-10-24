@@ -33,12 +33,15 @@ class DigestRecordModel:
         
         cursor = await db.execute(
             """
-            INSERT INTO digest_records (digest_date, digest_type, github_data, arxiv_data, youtube_data, email_sent, email_sent_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO digest_records (digest_date, digest_type, github_data, arxiv_data, youtube_data, email_sent, delivery_status, email_sent_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(digest_date, digest_type) DO UPDATE SET
                 github_data = excluded.github_data,
                 arxiv_data = excluded.arxiv_data,
                 youtube_data = excluded.youtube_data,
+                email_sent = excluded.email_sent,
+                delivery_status = excluded.delivery_status,
+                email_sent_at = excluded.email_sent_at,
                 updated_at = CURRENT_TIMESTAMP
             """,
             (
@@ -48,6 +51,7 @@ class DigestRecordModel:
                 arxiv_json,
                 youtube_json,
                 1 if record.email_sent else 0,
+                'sent' if record.email_sent else record.delivery_status,
                 record.email_sent_at.isoformat() if record.email_sent_at else None
             )
         )
@@ -78,10 +82,11 @@ class DigestRecordModel:
         return await DigestRecordModel.get_by_date(db, digest_date, digest_type)
     
     @staticmethod
-    async def get_latest(db: aiosqlite.Connection) -> Optional[DigestRecord]:
+    async def get_latest(db: aiosqlite.Connection, digest_type: str = "daily") -> Optional[DigestRecord]:
         """获取最新的摘要记录"""
         cursor = await db.execute(
-            "SELECT * FROM digest_records ORDER BY digest_date DESC LIMIT 1"
+            "SELECT * FROM digest_records WHERE digest_type = ? ORDER BY digest_date DESC LIMIT 1",
+            (digest_type,),
         )
         row = await cursor.fetchone()
         if not row:
@@ -144,13 +149,18 @@ class DigestRecordModel:
         sent: bool = True
     ):
         """更新邮件发送状态"""
+        await DigestRecordModel.update_delivery_status(db, digest_date, digest_type, 'sent' if sent else 'failed')
+
+    @staticmethod
+    async def update_delivery_status(db, digest_date: date, digest_type: str, status: str):
         await db.execute(
             """
             UPDATE digest_records 
-            SET email_sent = ?, email_sent_at = ?, updated_at = CURRENT_TIMESTAMP
+            SET email_sent = ?, delivery_status = ?, email_sent_at = ?, updated_at = CURRENT_TIMESTAMP
             WHERE digest_date = ? AND digest_type = ?
             """,
-            (1 if sent else 0, datetime.now().isoformat(), digest_date.isoformat(), digest_type)
+            (int(status == 'sent'), status, datetime.now().isoformat() if status == 'sent' else None,
+             digest_date.isoformat(), digest_type)
         )
         await db.commit()
     
@@ -190,6 +200,7 @@ class DigestRecordModel:
             arxiv_data=arxiv_data,
             youtube_data=youtube_data,
             email_sent=bool(row['email_sent']),
+            delivery_status=row['delivery_status'] if 'delivery_status' in row.keys() else ('sent' if row['email_sent'] else 'pending'),
             email_sent_at=datetime.fromisoformat(row['email_sent_at']) if row['email_sent_at'] else None,
             created_at=datetime.fromisoformat(row['created_at']) if row['created_at'] else None,
             updated_at=datetime.fromisoformat(row['updated_at']) if row['updated_at'] else None

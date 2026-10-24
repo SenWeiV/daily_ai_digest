@@ -1,0 +1,17 @@
+[Unit]
+Description=Daily AI Digest HTTPS origin tunnel
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cloudflared-digest tunnel --no-autoupdate --protocol http2 --edge-ip-version 4 --metrics 127.0.0.1:20241 run --token-file /etc/cloudflared-digest/token
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

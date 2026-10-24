@@ -107,6 +107,7 @@ class Settings(BaseSettings):
     # API配置
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8000, alias="API_PORT")
+    admin_api_key: SecretStr = Field(default=SecretStr(""), alias="ADMIN_API_KEY")
 
     # CORS
     # 逗号分隔，例如："https://senweiv.github.io,http://localhost:3000"
@@ -119,6 +120,7 @@ class Settings(BaseSettings):
     github_search_queries: str = Field(default="", alias="GITHUB_SEARCH_QUERIES")
     github_trending_attempt_timeout_seconds: float = Field(default=120.0, alias="GITHUB_TRENDING_ATTEMPT_TIMEOUT_SECONDS")
     github_trending_max_attempts: int = Field(default=10, alias="GITHUB_TRENDING_MAX_ATTEMPTS")
+    github_trending_total_timeout_seconds: float = Field(default=60.0, gt=0, alias="GITHUB_TRENDING_TOTAL_TIMEOUT_SECONDS")
     github_social_window_days: int = Field(default=14, alias="GITHUB_SOCIAL_WINDOW_DAYS")
     github_recent_comment_limit: int = Field(default=100, alias="GITHUB_RECENT_COMMENT_LIMIT")
     github_min_recent_comments_a: int = Field(default=5, alias="GITHUB_MIN_RECENT_COMMENTS_A")

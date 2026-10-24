@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 
 from app.config import settings
@@ -99,8 +100,18 @@ def apply_budget(
     def total() -> int:
         return estimated_message_wire_size([by_slug[slug] for slug in kept_slugs])
 
+    def drop_key(slug: str) -> tuple[int, int, str]:
+        if slug in {"ig-square", "x-card"}:
+            return (0, PLATFORM_DROP_ORDER.index(slug), slug)
+        content_page = re.fullmatch(r"xhs-content-(\d+)", slug)
+        if content_page:
+            return (1, -int(content_page.group(1)), slug)
+        return (3 if slug == "xhs-cover" else 2, 0, slug)
+
     reason = f"SMTP DATA 估算体积超出预算 {budget_bytes} 字节"
-    for slug in PLATFORM_DROP_ORDER:
+    # Include dynamic pages and future platform images, not just static slots.
+    drop_order = sorted((s for s in kept_slugs if s != LONG_IMAGE_SLUG), key=drop_key)
+    for slug in drop_order:
         if total() <= budget_bytes:
             break
         if slug in kept_slugs:

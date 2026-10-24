@@ -63,6 +63,7 @@ export interface DigestRecord {
   github_data: GitHubDigestItem[];
   arxiv_data: ArxivDigestItem[];
   email_sent: boolean;
+  delivery_status?: 'pending' | 'sending' | 'sent' | 'failed' | 'partial' | 'unknown';
   email_sent_at: string | null;
   created_at: string | null;
   updated_at: string | null;

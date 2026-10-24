@@ -1,6 +1,6 @@
 # 🤖 Daily AI Digest
 
-> 每日AI情报摘要系统 - 自动从GitHub获取AI领域热点项目，通过大模型深度分析后，以邮件形式发送每日情报摘要。
+> 每日AI情报摘要系统 - 自动从 GitHub 和 arXiv 获取 AI 领域热点内容，通过大模型深度分析后，以邮件形式发送每日情报摘要。
 
 ![Daily AI Digest](https://img.shields.io/badge/version-1.2.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.10+-green.svg)
@@ -18,11 +18,11 @@
 - 🐙 **GitHub Agent**: 自动检索AI/Agent领域最热门的Top 10项目，深度阅读README和核心代码
 - 🧠 **LLM 分析**: 默认 DeepSeek V4 Flash，也支持 Kimi、通义千问、Gemini 等 OpenAI 兼容接口
 - 📧 **邮件推送**: 精美HTML格式的每日摘要邮件，随时随地获取情报
-- ⏰ **定时执行**: 每天早上8点自动执行，也支持手动触发
+- ⏰ **定时执行**: 每天 08:30 整理前一天的内容，09:00 发送，也支持手动触发
 - 🖥️ **可视化看板**: React前端界面，查看历史数据和详细分析
 - 🇨🇳 **国内友好**: 支持国内大模型API，无需代理即可运行
 
-> ⚠️ **注意**: YouTube功能在国内环境需要代理才能使用。如无代理，YouTube功能将自动禁用，不影响GitHub分析功能。
+> 当前来源为 GitHub 和 arXiv。YouTube 已停用；历史兼容字段和部分旧依赖仍保留。
 
 ## 🏗️ 系统架构
 
@@ -45,10 +45,10 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                       AI Agent 核心层                            │
 │  ┌──────────────────┐  ┌──────────────────────────────────────┐ │
-│  │ GitHub Agent     │  │ YouTube Agent (国内需代理)            │ │
-│  │ - 趋势检索       │  │ - 视频检索                           │ │
-│  │ - 仓库内容爬取   │  │ - 字幕/转录获取                      │ │
-│  │ - 代码文件分析   │  │ - 视频内容理解                       │ │
+│  │ GitHub Agent     │  │ arXiv Agent (官方论文源)            │ │
+│  │ - 趋势检索       │  │ - 论文检索                           │ │
+│  │ - 仓库内容爬取   │  │ - 分类聚合与去重                      │ │
+│  │ - 代码文件分析   │  │ - 论文方法与结果分析                       │ │
 │  └──────────────────┘  └──────────────────────────────────────┘ │
 │  ┌──────────────────────────────────────────────────────────────┐│
 │  │            LLM 分析引擎 (DeepSeek/Kimi/通义/Gemini)          ││
@@ -189,8 +189,8 @@ bash ./stop.sh
 
 | 服务商 | BASE_URL | 模型示例 | 特点 |
 |--------|----------|---------|------|
-| **DeepSeek（默认）** | `https://api.deepseek.com` | deepseek-v4-flash | 1M 上下文，$0.14/$0.28 每 M |
-| Kimi (月之暗面) | `https://api.moonshot.cn/v1` | kimi-k2.5 | 长上下文；k2.5 与 moonshot-v1-* 于 2026-08-31 下线 |
+| **DeepSeek（默认）** | `https://api.deepseek.com` | deepseek-v4-flash | OpenAI 兼容接口；旧模型名由服务端兼容路由 |
+| Kimi (月之暗面) | `https://api.moonshot.cn/v1` | kimi-k3 | 支持文本与多模态；本文示例使用 K3 |
 | 阿里云通义 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | qwen-turbo | 稳定可靠 |
 | 智谱 AI | `https://open.bigmodel.cn/api/paas/v4` | glm-4-flash | 免费额度多 |
 
@@ -209,7 +209,7 @@ TEXT_MODEL=deepseek-v4-flash
 # Kimi 配置示例
 TEXT_API_KEY=<your-kimi-api-key>
 TEXT_BASE_URL=https://api.moonshot.cn/v1
-TEXT_MODEL=kimi-k2.5
+TEXT_MODEL=kimi-k3
 
 # 私有部署/代理地址示例
 TEXT_API_KEY=<your-private-api-key>
@@ -226,18 +226,6 @@ TEXT_MODEL=<your-model-name>
 5. **Generate new token (classic)**
 6. 勾选 `public_repo` 权限
 7. 点击 "Generate token" 并复制
-
-### YouTube Data API Key（可选，国内需要代理）
-
-1. 访问 [Google Cloud Console](https://console.cloud.google.com/)
-2. 创建新项目或选择已有项目
-3. 左侧菜单 → **APIs & Services** → **Library**
-4. 搜索 "YouTube Data API v3" 并启用
-5. 左侧菜单 → **APIs & Services** → **Credentials**
-6. **Create Credentials** → **API key**
-7. 复制生成的API Key
-
-> ⚠️ 国内环境无法直接访问 YouTube API，需要配置代理或在环境变量中设置 `HTTPS_PROXY`。
 
 ### Gmail 应用专用密码
 
@@ -260,7 +248,7 @@ daily_ai_digest/
 │   │   ├── agents/            # AI Agent模块
 │   │   │   ├── gemini_analyzer.py  # LLM分析引擎
 │   │   │   ├── github_agent.py
-│   │   │   └── youtube_agent.py
+│   │   │   └── arxiv_agent.py
 │   │   ├── api/               # API路由
 │   │   │   └── routes.py
 │   │   ├── services/          # 业务服务
@@ -304,7 +292,6 @@ daily_ai_digest/
 | GET  | `/api/status`          | 获取系统状态                    |
 | GET  | `/api/logs`            | 获取执行日志                    |
 | POST | `/api/email/test`      | 发送测试邮件                    |
-| POST | `/api/youtube/analyze` | 分析单个 YouTube 视频（URL/ID） |
 
 完整API文档访问：http://localhost:8000/docs
 
@@ -319,50 +306,37 @@ daily_ai_digest/
 | `VISION_API_KEY`        | 视觉质检密钥（Moonshot .cn）| 空（可选）       |
 | `IMAGE_GEN_API_KEY`     | 生图密钥（火山方舟 Ark）    | 空（可选）       |
 | `GITHUB_TOKEN`          | GitHub Token               | 空（必填）       |
-| `YOUTUBE_API_KEY`       | YouTube API Key            | 空（可选）       |
-| `SCHEDULE_HOUR`         | 每日执行小时                | 8                |
+| `SCHEDULE_HOUR`         | 日报送达小时                | 9                |
 | `SCHEDULE_MINUTE`       | 每日执行分钟                | 0                |
 | `TIMEZONE`              | 时区                        | Asia/Shanghai    |
 | `DEBUG`                 | 调试模式                    | false            |
 | `LOG_LEVEL`             | 日志级别                    | INFO             |
 
-## 🇨🇳 国内部署说明
+## 当前运行与验收
 
-### 无需代理即可使用的功能
+- 日报按 `Asia/Shanghai` 的前一天建立时间窗口。GitHub 查询窗口内最后推送的项目；arXiv 查询窗口内首次提交的论文。Trending 是当前滚动榜单，不是历史涨星快照。
+- 日报 08:30 开始整理，09:00 开始投递；超过约定时间则完成后立即发送。周报周日 20:30，月报月末 21:00。
+- 手动生成、修改设置、发送测试邮件需要 `ADMIN_API_KEY`。网页首次管理操作时输入密钥，仅保存在当前浏览器会话；读取摘要无需密钥。留空则禁用管理操作。
+- 六平台文案可开启。图片渲染、生图和视觉质检分别受独立开关控制，目前生产常驻状态仍关闭图片相关功能。
+- 已发送记录不会重复发送。明确失败可复用原内容再次投递；部分收件或结果不确定时需要先核对邮箱，再决定是否强制重发。
+- GitHub Pages 使用 `https://digest-api.vincentws.com/api` 访问后端。边缘代理配置见 `infra/cloudflare/README.md`。
+- 网络可达性以部署环境实测为准。Trending 总时间预算由 `GITHUB_TRENDING_TOTAL_TIMEOUT_SECONDS` 控制，默认 60 秒，超时后使用 API 搜索补充。
 
-- ✅ GitHub 项目检索和分析
-- ✅ 使用国内大模型进行内容分析（Kimi、DeepSeek、通义千问等）
-- ✅ 邮件发送
-
-### 需要代理的功能
-
-- ⚠️ YouTube 视频检索和分析（需配置 `HTTPS_PROXY` 环境变量）
-
-### 推荐配置
-
-使用国内大模型 API（如 DeepSeek、Kimi、通义千问等），无需代理即可完整运行：
-
-```env
-# DeepSeek API 示例（默认）
-TEXT_API_KEY=<your-deepseek-api-key>
-TEXT_BASE_URL=https://api.deepseek.com
-TEXT_MODEL=deepseek-v4-flash
-
-# Kimi API 示例
-TEXT_API_KEY=<your-kimi-api-key>
-TEXT_BASE_URL=https://api.moonshot.cn/v1
-TEXT_MODEL=kimi-k2.5
-```
-
-### 部署验证
-
-部署后可运行 smoke test 验证配置：
+运行一次真实采集、分析、投递和收件验证（只在明确需要发送测试邮件时执行）：
 
 ```bash
-cd backend
-source venv/bin/activate
-python smoke_test.py
+docker exec -w /app/backend daily-ai-digest-backend \
+  python tests/manual/e2e_delivery.py --send --report-dir /app/data/e2e/manual-run
 ```
+
+测试使用临时数据库，不写正常日报记录。报告和实际收到的邮件保存在指定目录。只重查同一封邮件而不重新发送：
+
+```bash
+docker exec -w /app/backend daily-ai-digest-backend \
+  python tests/manual/e2e_delivery.py --verify-only --report-dir /app/data/e2e/manual-run
+```
+
+收件验证需要发送账号也是收件人，且支持使用现有凭据登录 IMAP。对其余收件人，只能确认 SMTP 接受和 To 地址正确，不能代替其实际收件箱验证。
 
 ## 📧 Gmail 限制说明
 

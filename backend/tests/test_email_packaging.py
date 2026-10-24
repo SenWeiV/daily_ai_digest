@@ -74,9 +74,10 @@ def _send(service, **kwargs):
 # --- MIME 结构 ------------------------------------------------------------
 
 
-def _build_message(attachments=None, copy_html="", copy_text="", withheld_html="", recipient=None):
+def _build_message(attachments=None, copy_html="", copy_text="", withheld_html="", recipient=None, refusals=None, quit_error=False, use_ssl=True, send_test=False):
     """复用 send_digest_email 的构造逻辑，但不发送。"""
     service = _CapturingService()
+    service.use_ssl = use_ssl
     sent = {}
 
     import aiosmtplib
@@ -89,6 +90,8 @@ def _build_message(attachments=None, copy_html="", copy_text="", withheld_html="
             return self
 
         async def __aexit__(self, *args):
+            if quit_error:
+                raise RuntimeError("QUIT connection lost")
             return False
 
         async def login(self, *args):
@@ -101,11 +104,12 @@ def _build_message(attachments=None, copy_html="", copy_text="", withheld_html="
             sent["raw"] = raw
             sent["recipients"] = recipient
             sent["count"] = sent.get("count", 0) + 1
+            return refusals or {}, "accepted"
 
     original = aiosmtplib.SMTP
     aiosmtplib.SMTP = _FakeSMTP
     try:
-        ok = asyncio.run(
+        ok = asyncio.run(service.send_test_email(recipient)) if send_test else asyncio.run(
             service.send_digest_email(
                 date(2026, 8, 1),
                 _github(),
@@ -445,3 +449,37 @@ def test_one_message_goes_to_every_recipient():
     assert count == 1
     assert _build_message.last_recipients == ["a@x.com", "b@y.com"]
     assert message["To"] == "a@x.com, b@y.com"
+
+
+def test_partial_recipient_acceptance_is_not_reported_as_success():
+    from app.services.email_service import PartialDeliveryError
+    with pytest.raises(PartialDeliveryError):
+        _build_message(recipient="a@x.com,b@y.com", refusals={"b@y.com": "rejected"})
+
+
+def test_quit_failure_does_not_undo_acknowledged_data():
+    ok, message, count = _build_message(quit_error=True)
+    assert ok and count == 1
+    assert message["Message-ID"] and message["Date"]
+
+
+def test_attachment_budget_drops_dynamic_pages_from_the_end():
+    attachments = [_attachment(LONG_IMAGE_SLUG, 1000)] + [
+        _attachment(f"xhs-content-{i}", 1000) for i in range(1, 11)
+    ]
+    budget = estimated_message_wire_size(attachments[:2])
+    result = apply_budget(attachments, budget_bytes=budget)
+    assert result.estimated_wire_size <= budget
+    assert [a.slug for a in result.kept] == [LONG_IMAGE_SLUG, "xhs-content-1"]
+    assert [slug for slug, _ in result.dropped] == [f"xhs-content-{i}" for i in range(10, 1, -1)]
+
+
+def test_manual_starttls_does_not_auto_upgrade_twice():
+    ok, _, count = _build_message(use_ssl=False)
+    assert ok and count == 1
+    assert _build_message.last_kwargs["start_tls"] is False
+
+
+def test_connectivity_test_also_reports_partial_refusal():
+    ok, _, count = _build_message(recipient="a@x.com,b@y.com", refusals={"b@y.com": "rejected"}, send_test=True)
+    assert not ok and count == 1

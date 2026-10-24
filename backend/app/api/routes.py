@@ -4,9 +4,10 @@ API 路由模块 - 所有REST API接口定义
 
 import logging
 from datetime import date, datetime
-from typing import Optional
+from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, Depends
+from app.api.auth import require_admin
 
 from app.config import settings
 from app.schemas import (
@@ -42,20 +43,20 @@ async def get_today_digest():
 
 
 @router.get("/digest/latest", response_model=Optional[DigestRecord])
-async def get_latest_digest():
+async def get_latest_digest(digest_type: Literal["daily", "weekly", "monthly"] = "daily"):
     """获取最新摘要"""
     from app.database import get_db
     from app.models import DigestRecordModel
     
     async with get_db() as db:
-        return await DigestRecordModel.get_latest(db)
+        return await DigestRecordModel.get_latest(db, digest_type)
 
 
 @router.get("/digest/history")
 async def get_digest_history(
     limit: int = Query(default=30, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-    digest_type: str = Query(default="daily", description="摘要类型: daily/weekly/monthly")
+    digest_type: Literal["daily", "weekly", "monthly"] = Query(default="daily", description="摘要类型: daily/weekly/monthly")
 ):
     """获取历史摘要列表"""
     records = await digest_service.get_history(limit, offset, digest_type)
@@ -69,21 +70,21 @@ async def get_digest_history(
 
 
 @router.get("/digest/{digest_date}", response_model=Optional[DigestRecord])
-async def get_digest_by_date(digest_date: str):
+async def get_digest_by_date(digest_date: str, digest_type: Literal["daily", "weekly", "monthly"] = "daily"):
     """获取指定日期的摘要"""
     try:
         target_date = date.fromisoformat(digest_date)
     except ValueError:
         raise HTTPException(status_code=400, detail="日期格式错误，请使用 YYYY-MM-DD 格式")
     
-    record = await digest_service.get_digest_by_date(target_date)
+    record = await digest_service.get_digest_by_date(target_date, digest_type)
     if not record:
         raise HTTPException(status_code=404, detail=f"未找到 {digest_date} 的摘要数据")
     
     return record
 
 
-@router.post("/digest/trigger", response_model=TriggerResponse)
+@router.post("/digest/trigger", response_model=TriggerResponse, dependencies=[Depends(require_admin)])
 async def trigger_digest(
     request: TriggerRequest,
     background_tasks: BackgroundTasks
@@ -204,7 +205,7 @@ async def get_config():
     }
 
 
-@router.put("/config")
+@router.put("/config", dependencies=[Depends(require_admin)])
 async def update_config(config: ConfigUpdate):
     """更新配置"""
     updated = {}
@@ -231,7 +232,7 @@ async def update_config(config: ConfigUpdate):
 # 邮件测试接口
 # =====================
 
-@router.post("/email/test")
+@router.post("/email/test", dependencies=[Depends(require_admin)])
 async def send_test_email(recipient: Optional[str] = None):
     """发送测试邮件"""
     if not email_service.is_configured:
@@ -254,7 +255,11 @@ def _mask_email(email: str) -> str:
     if not email or "@" not in email:
         return ""
     
-    parts = email.split("@")
-    if len(parts[0]) <= 2:
-        return f"{parts[0][0]}***@{parts[1]}"
-    return f"{parts[0][:2]}***@{parts[1]}"
+    from app.services.email_service import parse_recipients
+    masked = []
+    for address in parse_recipients(email):
+        if "@" in address:
+            local, domain = address.rsplit("@", 1)
+            if local and domain:
+                masked.append(f"{local[:2]}***@{domain}")
+    return ", ".join(masked)

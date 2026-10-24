@@ -200,6 +200,14 @@ def matching_profiles(text: str) -> list[str]:
     normalized = normalize_text(text)
     matches: list[str] = []
     for profile in RESEARCH_PROFILES:
+        if profile.name == "agentic" and not any(
+            _contains_term(normalized, term) for term in (
+                "llm", "language model", "ai agent", "ai agents", "agentic", "artificial intelligence",
+                "mcp", "model context protocol", "claude", "gpt", "autogen", "langgraph", "crewai",
+                "computer use", "tool calling", "multi-agent", "multi agent",
+            )
+        ):
+            continue
         has_domain = any(_contains_term(normalized, term) for term in profile.domain_terms)
         has_content = any(_contains_term(normalized, term) for term in profile.content_terms)
         if has_domain and has_content:

@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.content_window import ContentWindow
 from app.content_profile import (
     extract_explicit_github_urls,
     is_research_relevant,
@@ -26,6 +27,7 @@ class ArxivAgent:
     """Retrieve bounded daily candidates from official arXiv feeds."""
 
     BASE_URL = "https://export.arxiv.org/rss/"
+    QUERY_URL = "https://export.arxiv.org/api/query"
 
     def __init__(self) -> None:
         self.categories = tuple(settings.arxiv_categories_list)
@@ -70,7 +72,9 @@ class ArxivAgent:
             arxiv_id = self.normalize_id(raw_id)
             if not arxiv_id or not title:
                 continue
-            categories = [category]
+            if not re.fullmatch(r"(?:\d{4}\.\d{4,5}|[A-Za-z.-]+/\d{7})", arxiv_id):
+                continue
+            categories = [category] if category else []
             category_nodes = [*entry.findall("category"), *entry.findall("{*}category")]
             for category_node in category_nodes:
                 category_text = category_node.attrib.get("term") or self._text(category_node)
@@ -128,11 +132,24 @@ class ArxivAgent:
             )
         return list(merged.values())
 
-    async def fetch(self) -> list[ArxivDigestItem]:
+    async def fetch(self, window: ContentWindow | None = None) -> list[ArxivDigestItem]:
         if not self.is_available:
             return []
         collected: list[ArxivDigestItem] = []
         async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
+            if window:
+                try:
+                    categories = " OR ".join(f"cat:{category}" for category in self.categories)
+                    response = await client.get(self.QUERY_URL, params={
+                        "search_query": f"({categories}) AND submittedDate:{window.arxiv_range}",
+                        "start": 0, "max_results": min(1000, max(100, self.max_items * 10)),
+                        "sortBy": "submittedDate", "sortOrder": "descending",
+                    })
+                    response.raise_for_status()
+                    collected = self.parse_feed(response.text, "")
+                    return self._select(collected, window)
+                except (httpx.HTTPError, ET.ParseError, ValueError) as exc:
+                    logger.warning("arXiv dated query failed; checking RSS within the same window: %s", exc)
             for category in self.categories:
                 try:
                     response = await client.get(f"{self.BASE_URL}{category}")
@@ -140,6 +157,11 @@ class ArxivAgent:
                     collected.extend(self.parse_feed(response.text, category))
                 except (httpx.HTTPError, ET.ParseError, ValueError) as exc:
                     logger.warning("arXiv feed failed [%s]: %s", category, exc)
+        return self._select(collected, window)
+
+    def _select(self, collected: list[ArxivDigestItem], window: ContentWindow | None) -> list[ArxivDigestItem]:
+        if window:
+            collected = [item for item in collected if window.contains(item.published_at)]
         merged = self.merge_items(collected)
         grade_rank = {"A": 2, "B": 1, "C": 0}
         return sorted(

@@ -27,6 +27,7 @@ EXCLUDES=(
   --exclude='.DS_Store' --exclude='._*' --exclude='node_modules/' --exclude='frontend/dist/'
   --exclude='docs/private/' --exclude='百度云服务器接入参数.md' --exclude='百度云服务器连接指南.md'
   --exclude='资料索引.md' --exclude='.claude/worktrees/'
+  --exclude='.agents/'
 )
 
 remote() { ssh "${SSH_OPTS[@]}" "$TARGET" "$@"; }
@@ -56,12 +57,15 @@ case "$cmd" in
       echo "✋ 本地没有 backend/app/publishers/，说明还没把服务器上的 8 月代码拉回来。"
       echo "   先运行：$0 pull --dry-run  然后  $0 pull"; exit 1
     fi
+    if [[ " $* " == *" --dry-run "* || " $* " == *" -n "* ]]; then
+      COPYFILE_DISABLE=1 rsync -az --delete --itemize-changes "$@" "${EXCLUDES[@]}" -e "$RSH" "$ROOT/" "$TARGET:$DEST/"
+      echo "（dry-run，未备份或重建容器）"; exit 0
+    fi
     STAMP="$(date +%Y%m%d-%H%M%S)"
     echo "→ 服务器备份到 /root/digest-backups/$STAMP"
-    remote "set -e; cd $DEST; mkdir -p /root/digest-backups/$STAMP; cp data/digest.db /root/digest-backups/$STAMP/digest.db; cp .env /root/digest-backups/$STAMP/env.bak; tar czf /root/digest-backups/$STAMP/repo-tree.tgz --exclude=data --exclude=.git . 2>/dev/null || true; git diff > /root/digest-backups/$STAMP/server-local.patch || true"
+    remote "set -e; cd $DEST; mkdir -p /root/digest-backups/$STAMP; python3 -c \"import sqlite3; s=sqlite3.connect('file:data/digest.db?mode=ro', uri=True); d=sqlite3.connect('/root/digest-backups/$STAMP/digest.db'); s.backup(d); d.close(); s.close()\"; cp .env /root/digest-backups/$STAMP/env.bak; docker inspect --format='{{.Image}}' daily-ai-digest-backend > /root/digest-backups/$STAMP/image-id.txt; tar czf /root/digest-backups/$STAMP/repo-tree.tgz --exclude=data --exclude=.git . 2>/dev/null; git diff > /root/digest-backups/$STAMP/server-local.patch"
     echo "→ rsync（--delete）到 $TARGET:$DEST"
     COPYFILE_DISABLE=1 rsync -az --delete --itemize-changes "$@" "${EXCLUDES[@]}" -e "$RSH" "$ROOT/" "$TARGET:$DEST/"
-    if [[ " $* " == *" --dry-run "* || " $* " == *" -n "* ]]; then echo "（dry-run，未重建容器）"; exit 0; fi
     echo "→ 重建容器"
     remote "cd $DEST && docker compose up -d --build && sleep 15 && docker compose ps"
     curl -sS -m 10 "http://$HOST:8000/health"; echo ;;

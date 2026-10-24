@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { RefreshCw, Calendar } from "lucide-react";
 import Dashboard from "../components/Dashboard";
 import GitHubList from "../components/GitHubList";
@@ -28,27 +28,36 @@ function Home() {
   const [selectedItem, setSelectedItem] = useState<GitHubDigestItem | null>(null);
   const [activeTab, setActiveTab] = useState<"github" | "arxiv">("github");
   const [digestType, setDigestType] = useState<DigestType>("daily");
+  const currentRequest = useRef<AbortController | null>(null);
 
   // 加载数据
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
+    currentRequest.current?.abort();
+    const controller = new AbortController();
+    currentRequest.current = controller;
     try {
       setLoading(true);
       const [statusData, digestData] = await Promise.all([
-        systemApi.getStatus(),
-        digestApi.getLatest(),
+        systemApi.getStatus(controller.signal),
+        digestApi.getLatest(digestType, controller.signal),
       ]);
+      if (controller.signal.aborted) return;
       setStatus(statusData);
       setDigest(digestData);
     } catch (error) {
-      console.error("加载数据失败:", error);
+      if (!controller.signal.aborted) {
+        setDigest(null);
+        console.error("加载数据失败:", error);
+      }
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
-  };
+  }, [digestType]);
 
   useEffect(() => {
     loadData();
-  }, []);
+    return () => currentRequest.current?.abort();
+  }, [loadData]);
 
   // 手动触发
   const handleTrigger = async () => {

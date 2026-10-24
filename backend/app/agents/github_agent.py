@@ -13,6 +13,7 @@ from github import Github, GithubException
 from github.Repository import Repository
 
 from app.config import secret_value, settings
+from app.content_window import ContentWindow
 from app.schemas import GitHubDigestItem
 from app.agents.gemini_analyzer import gemini_analyzer
 from app.utils.helpers import truncate_text
@@ -235,6 +236,20 @@ class GitHubAgent:
             return False, [], e
 
     async def fetch_trending_repos(
+        self,
+        time_range: Literal["daily", "weekly", "monthly"] = "daily",
+        language: str = "",
+    ) -> List[Dict[str, Any]]:
+        try:
+            return await asyncio.wait_for(
+                self._fetch_trending_repos(time_range, language),
+                timeout=settings.github_trending_total_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Trending 总耗时超预算，转入 GitHub API 搜索")
+            return []
+
+    async def _fetch_trending_repos(
         self,
         time_range: Literal["daily", "weekly", "monthly"] = "daily",
         language: str = ""
@@ -534,18 +549,19 @@ class GitHubAgent:
             return tuple(query.strip() for query in settings.github_search_queries.split(";") if query.strip())
         return self.DEFAULT_SEARCH_QUERIES
 
-    async def search_popular_active_candidates(self) -> list[dict[str, Any]]:
+    async def search_popular_active_candidates(self, window: ContentWindow | None = None) -> list[dict[str, Any]]:
         """Search recently-pushed relevant repositories as a bounded fallback."""
         if not self.client:
             return []
 
         cutoff = (date.today() - timedelta(days=settings.github_active_project_days)).isoformat()
+        activity_query = f"pushed:{window.github_range}" if window else f"pushed:>={cutoff}"
         queries = self._search_queries()
         per_query = max(1, settings.github_candidate_limit // max(len(queries), 1))
 
         def run_search(query: str) -> list[Repository]:
             results = self.client.search_repositories(
-                query=f"{query} pushed:>={cutoff}",
+                query=f"{query} {activity_query}",
                 sort="stars",
                 order="desc",
             )
@@ -615,6 +631,7 @@ class GitHubAgent:
         self,
         candidates: list[dict[str, Any]],
         seen_repo_ids: set[int],
+        window: ContentWindow | None = None,
     ) -> list[tuple[dict[str, Any], Repository, dict[str, Any], str, set[str], list[str]]]:
         graded: list[tuple[dict[str, Any], Repository, dict[str, Any], str, set[str], list[str]]] = []
         for repo_info in candidates:
@@ -622,11 +639,15 @@ class GitHubAgent:
                 repo = repo_info.get("repo") or await self.get_repo_details_from_api(repo_info["full_name"])
                 if not repo:
                     continue
+                pushed_at = getattr(repo, "pushed_at", None)
+                if window and not window.contains(pushed_at):
+                    continue
                 repo_id = int(repo.id)
                 if repo_id in seen_repo_ids:
                     continue
                 seen_repo_ids.add(repo_id)
                 repo_info["repo_id"] = repo_id
+                repo_info["pushed_at"] = pushed_at.isoformat() if pushed_at else None
                 repo_info["stars"] = repo.stargazers_count
                 repo_info["forks"] = repo.forks_count
                 repo_info["watchers"] = getattr(repo, "subscribers_count", 0) or 0
@@ -647,6 +668,7 @@ class GitHubAgent:
     async def get_research_repos(
         self,
         time_range: Literal["daily", "weekly", "monthly"] = "daily",
+        window: ContentWindow | None = None,
     ) -> List[GitHubDigestItem]:
         """Collect and grade bounded candidates without running model analysis."""
         self._analysis_context = {}
@@ -682,12 +704,13 @@ class GitHubAgent:
         graded = await self._grade_candidates(
             trending_candidates[:trending_budget],
             seen_repo_ids,
+            window,
         )
 
         remaining_budget = max(0, settings.github_candidate_limit - trending_budget)
         if len(graded) < settings.target_items and remaining_budget:
             try:
-                search_candidates = await self.search_popular_active_candidates()
+                search_candidates = await self.search_popular_active_candidates(window=window) if window else await self.search_popular_active_candidates()
             except Exception as exc:
                 logger.warning("GitHub fallback Repository Search failed: %s", exc)
                 search_candidates = []
@@ -695,6 +718,7 @@ class GitHubAgent:
                 await self._grade_candidates(
                     search_candidates[:remaining_budget],
                     seen_repo_ids,
+                    window,
                 )
             )
 
@@ -723,6 +747,7 @@ class GitHubAgent:
                     deep_analysis=False,
                 )
                 item.watchers = repo_info.get("watchers", 0)
+                item.pushed_at = repo_info.get("pushed_at")
                 item.open_issues = repo_info.get("open_issues", 0)
                 item.recent_issue_comments = repo_info.get("recent_issue_comments")
                 item.source_channel = repo_info.get("source_channel", "legacy")

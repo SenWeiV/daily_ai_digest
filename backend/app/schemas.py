@@ -32,6 +32,7 @@ class GitHubDigestItem(BaseModel):
     topics: List[str] = Field(default_factory=list, description="项目标签")
     created_at: Optional[str] = Field(default=None, description="创建时间")
     updated_at: Optional[str] = Field(default=None, description="最后更新时间")
+    pushed_at: Optional[str] = Field(default=None, description="最后推送时间（UTC）")
     
     # Gemini 分析结果
     summary: Optional[str] = Field(default=None, description="项目核心总结")
@@ -112,6 +113,7 @@ class DigestRecord(BaseModel):
     arxiv_data: List[ArxivDigestItem] = Field(default_factory=list)
     youtube_data: List[YouTubeDigestItem] = Field(default_factory=list)
     email_sent: bool = Field(default=False, description="邮件是否已发送")
+    delivery_status: str = Field(default="pending", description="pending/sending/sent/failed/partial/unknown")
     email_sent_at: Optional[datetime] = Field(default=None, description="邮件发送时间")
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -161,8 +163,8 @@ class ConfigUpdate(BaseModel):
     gmail_sender: Optional[str] = None
     gmail_app_password: Optional[str] = None
     digest_recipient: Optional[str] = None
-    schedule_hour: Optional[int] = None
-    schedule_minute: Optional[int] = None
+    schedule_hour: Optional[int] = Field(default=None, ge=0, le=23)
+    schedule_minute: Optional[int] = Field(default=None, ge=0, le=59)
     timezone: Optional[str] = None
     ai_keywords: Optional[List[str]] = None
 

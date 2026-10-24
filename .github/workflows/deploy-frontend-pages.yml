@@ -39,10 +39,14 @@ jobs:
 
       - name: Build
         env:
-          # 在 GitHub 仓库 Settings -> Secrets and variables -> Actions -> Variables 里配置
-          # VITE_API_BASE_URL = https://your-api-host.example/api
+          # HTTPS Pages must call HTTPS. Old HTTP variables fall back to the edge entry point.
           VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
-        run: npm run build
+        run: |
+          case "$VITE_API_BASE_URL" in
+            https://*) ;;
+            *) export VITE_API_BASE_URL="https://digest-api.vincentws.com/api" ;;
+          esac
+          npm run build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
