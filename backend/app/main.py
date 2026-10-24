@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from app.config import settings
 from app.database import init_database
 from app.api.routes import router
+from app.logging_config import quiet_sensitive_http_logs
 from app.services.scheduler import scheduler_service
 
 # 配置日志
@@ -25,6 +26,9 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout)
     ]
 )
+# httpx 的 INFO 请求行会包含 Seedream 24 小时有效的签名下载 URL。业务层已经
+# 记录 provider / 模型 / 尺寸 / 结果；第三方原始请求行既多余又会泄露短期凭证。
+quiet_sensitive_http_logs()
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +75,7 @@ def _check_config():
     """检查配置状态"""
     issues = []
     
-    if not settings.gemini_api_key:
+    if not settings.text_api_key:
         issues.append("⚠️  Gemini API Key 未配置")
     else:
         logger.info("✅ Gemini API Key 已配置")

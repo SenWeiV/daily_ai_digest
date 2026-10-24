@@ -16,7 +16,7 @@
 ## ✨ 功能特性
 
 - 🐙 **GitHub Agent**: 自动检索AI/Agent领域最热门的Top 10项目，深度阅读README和核心代码
-- 🧠 **LLM 分析**: 支持多种大模型（Kimi、DeepSeek、通义千问、Gemini等）进行深度分析
+- 🧠 **LLM 分析**: 默认 DeepSeek V4 Flash，也支持 Kimi、通义千问、Gemini 等 OpenAI 兼容接口
 - 📧 **邮件推送**: 精美HTML格式的每日摘要邮件，随时随地获取情报
 - ⏰ **定时执行**: 每天早上8点自动执行，也支持手动触发
 - 🖥️ **可视化看板**: React前端界面，查看历史数据和详细分析
@@ -51,7 +51,7 @@
 │  │ - 代码文件分析   │  │ - 视频内容理解                       │ │
 │  └──────────────────┘  └──────────────────────────────────────┘ │
 │  ┌──────────────────────────────────────────────────────────────┐│
-│  │               LLM 分析引擎 (Kimi/DeepSeek/通义/Gemini)       ││
+│  │            LLM 分析引擎 (DeepSeek/Kimi/通义/Gemini)          ││
 │  └──────────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -107,10 +107,10 @@ cp .env.example .env
 编辑 `.env` 文件，填入以下配置（详细获取步骤见下文）：
 
 ```env
-# LLM API 配置 (支持 Kimi/DeepSeek/通义千问 等 OpenAI 兼容接口)
-GEMINI_API_KEY=your_api_key
-GEMINI_BASE_URL=https://api.moonshot.cn/v1  # Kimi API
-GEMINI_MODEL=moonshot-v1-8k
+# LLM API 配置 (默认 DeepSeek V4 Flash，也支持 Kimi/通义千问 等 OpenAI 兼容接口)
+TEXT_API_KEY=your_deepseek_api_key
+TEXT_BASE_URL=https://api.deepseek.com
+TEXT_MODEL=deepseek-v4-flash
 
 # GitHub Token
 GITHUB_TOKEN=your_github_token
@@ -189,28 +189,32 @@ bash ./stop.sh
 
 | 服务商 | BASE_URL | 模型示例 | 特点 |
 |--------|----------|---------|------|
-| Kimi (月之暗面) | `https://api.moonshot.cn/v1` | moonshot-v1-8k | 长上下文 |
-| DeepSeek | `https://api.deepseek.com/v1` | deepseek-chat | 价格便宜 |
+| **DeepSeek（默认）** | `https://api.deepseek.com` | deepseek-v4-flash | 1M 上下文，$0.14/$0.28 每 M |
+| Kimi (月之暗面) | `https://api.moonshot.cn/v1` | kimi-k2.5 | 长上下文；k2.5 与 moonshot-v1-* 于 2026-08-31 下线 |
 | 阿里云通义 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | qwen-turbo | 稳定可靠 |
 | 智谱 AI | `https://open.bigmodel.cn/api/paas/v4` | glm-4-flash | 免费额度多 |
+
+API 密钥必须与 BASE_URL 属于同一家服务商，跨家使用会认证失败。
 
 配置示例：
 
 ```env
-# Kimi 配置示例
-GEMINI_API_KEY=<your-kimi-api-key>
-GEMINI_BASE_URL=https://api.moonshot.cn/v1
-GEMINI_MODEL=moonshot-v1-8k
+# DeepSeek 配置示例（默认）
+TEXT_API_KEY=<your-deepseek-api-key>
+TEXT_BASE_URL=https://api.deepseek.com
+TEXT_MODEL=deepseek-v4-flash
+# 没有 temperature / max_tokens 配置项：请求只发 model + messages，
+# 其余全用 provider 默认值（思考模式保持开启，长度按各家上限）。
 
-# DeepSeek 配置示例
-GEMINI_API_KEY=<your-deepseek-api-key>
-GEMINI_BASE_URL=https://api.deepseek.com/v1
-GEMINI_MODEL=deepseek-chat
+# Kimi 配置示例
+TEXT_API_KEY=<your-kimi-api-key>
+TEXT_BASE_URL=https://api.moonshot.cn/v1
+TEXT_MODEL=kimi-k2.5
 
 # 私有部署/代理地址示例
-GEMINI_API_KEY=<your-private-api-key>
-GEMINI_BASE_URL=http://<your-private-gateway>:<port>
-GEMINI_MODEL=kimi-k2.5
+TEXT_API_KEY=<your-private-api-key>
+TEXT_BASE_URL=http://<your-private-gateway>:<port>
+TEXT_MODEL=<your-model-name>
 ```
 
 ### GitHub Personal Access Token
@@ -308,10 +312,12 @@ daily_ai_digest/
 
 | 配置项                   | 说明                        | 默认值           |
 | ------------------------ | --------------------------- | ---------------- |
-| `GEMINI_API_KEY`        | LLM API 密钥               | 空（必填）       |
-| `GEMINI_BASE_URL`       | LLM API 地址（OpenAI兼容） | 空               |
-| `GEMINI_MODEL`          | 主模型名称                  | kimi-k2.5        |
-| `GEMINI_FALLBACK_MODELS`| 回退模型（逗号分隔）        | 空               |
+| `TEXT_API_KEY`        | LLM API 密钥               | 空（必填）       |
+| `TEXT_BASE_URL`       | LLM API 地址（OpenAI兼容） | https://api.deepseek.com |
+| `TEXT_MODEL`          | 主模型名称                  | deepseek-v4-flash |
+| `TEXT_FALLBACK_MODELS`| 回退模型（逗号分隔）        | 空               |
+| `VISION_API_KEY`        | 视觉质检密钥（Moonshot .cn）| 空（可选）       |
+| `IMAGE_GEN_API_KEY`     | 生图密钥（火山方舟 Ark）    | 空（可选）       |
 | `GITHUB_TOKEN`          | GitHub Token               | 空（必填）       |
 | `YOUTUBE_API_KEY`       | YouTube API Key            | 空（可选）       |
 | `SCHEDULE_HOUR`         | 每日执行小时                | 8                |
@@ -334,18 +340,18 @@ daily_ai_digest/
 
 ### 推荐配置
 
-使用国内大模型 API（如 Kimi、DeepSeek、通义千问等），无需代理即可完整运行：
+使用国内大模型 API（如 DeepSeek、Kimi、通义千问等），无需代理即可完整运行：
 
 ```env
-# Kimi API 示例（推荐）
-GEMINI_API_KEY=<your-kimi-api-key>
-GEMINI_BASE_URL=https://api.moonshot.cn/v1
-GEMINI_MODEL=moonshot-v1-8k
+# DeepSeek API 示例（默认）
+TEXT_API_KEY=<your-deepseek-api-key>
+TEXT_BASE_URL=https://api.deepseek.com
+TEXT_MODEL=deepseek-v4-flash
 
-# DeepSeek API 示例
-GEMINI_API_KEY=<your-deepseek-api-key>
-GEMINI_BASE_URL=https://api.deepseek.com/v1
-GEMINI_MODEL=deepseek-chat
+# Kimi API 示例
+TEXT_API_KEY=<your-kimi-api-key>
+TEXT_BASE_URL=https://api.moonshot.cn/v1
+TEXT_MODEL=kimi-k2.5
 ```
 
 ### 部署验证

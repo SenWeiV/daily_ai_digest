@@ -11,13 +11,24 @@ from datetime import datetime, date
 from typing import List, Optional
 
 import aiosmtplib
-from tenacity import retry, stop_after_attempt, wait_exponential
+from email.mime.image import MIMEImage
 
-from app.config import settings
+from app.config import secret_value, settings
 from app.schemas import GitHubDigestItem, ArxivDigestItem, YouTubeDigestItem
+from app.services.attachment_budget import Attachment
 from app.utils.helpers import format_number
 
 logger = logging.getLogger(__name__)
+
+# 文件名后缀 → MIME 子类型。
+# 刻意不让 MIMEImage 去嗅探内容：嗅探失败时它抛 TypeError，那会让一张附件
+# 的类型识别不出来变成整封邮件发不出去。后缀是我们自己生成的，是权威来源。
+_IMAGE_SUBTYPES = {"png": "png", "jpg": "jpeg", "jpeg": "jpeg", "webp": "webp", "gif": "gif"}
+
+
+def _image_subtype(filename: str) -> str:
+    suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return _IMAGE_SUBTYPES.get(suffix, "png")
 
 
 class EmailService:
@@ -32,7 +43,7 @@ class EmailService:
         
         # 发件人信息（优先新配置，兼容旧配置）
         self.sender_email = settings.email_sender or settings.gmail_sender
-        self.app_password = settings.email_password or settings.gmail_app_password
+        self.app_password = secret_value(settings.email_password or settings.gmail_app_password)
         self.recipient_email = settings.email_recipient or settings.digest_recipient or self.sender_email
         
         if self.sender_email and self.app_password:
@@ -51,7 +62,9 @@ class EmailService:
         github_items: List[GitHubDigestItem],
         youtube_items: List[YouTubeDigestItem],
         arxiv_items: Optional[List[ArxivDigestItem]] = None,
-        daily_summary: Optional[str] = None
+        daily_summary: Optional[str] = None,
+        copy_section_html: str = "",
+        withheld_html: str = "",
     ) -> str:
         """生成HTML邮件模板"""
         
@@ -193,7 +206,7 @@ class EmailService:
     <!-- GitHub Top 10 -->
     <div style="margin: 32px 0;">
         <h2 style="color: #24292f; border-bottom: 2px solid #2ea44f; padding-bottom: 8px; display: flex; align-items: center;">
-            <span style="font-size: 24px; margin-right: 8px;">??</span> GitHub Top {len(github_items)}
+            <span style="font-size: 24px; margin-right: 8px;">🐙</span> GitHub Top {len(github_items)}
         </h2>
         {github_html if github_html else '<p style="color: #57606a;">暂无数据</p>'}
     </div>
@@ -207,11 +220,15 @@ class EmailService:
     <!-- YouTube Top 10 -->
     <div style="margin: 32px 0;">
         <h2 style="color: #24292f; border-bottom: 2px solid #ff0000; padding-bottom: 8px; display: flex; align-items: center;">
-            <span style="font-size: 24px; margin-right: 8px;">??</span> YouTube Top {len(youtube_items)}
+            <span style="font-size: 24px; margin-right: 8px;">📺</span> YouTube Top {len(youtube_items)}
         </h2>
         {youtube_html if youtube_html else '<p style="color: #57606a;">暂无数据</p>'}
     </div>
-    
+
+    {withheld_html}
+
+    {copy_section_html}
+
     <!-- Footer -->
     <div style="text-align: center; padding: 24px 0; border-top: 1px solid #e1e4e8; color: #57606a; font-size: 14px;">
         <p style="margin: 0;">由 <strong>Daily AI Digest</strong> 自动生成</p>
@@ -316,11 +333,6 @@ class EmailService:
         
         return "\n".join(lines)
     
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        reraise=True
-    )
     async def send_digest_email(
         self,
         digest_date: date,
@@ -329,11 +341,15 @@ class EmailService:
         arxiv_items: Optional[List[ArxivDigestItem]] = None,
         daily_summary: Optional[str] = None,
         recipient: Optional[str] = None,
-        subject_suffix: str = "Daily"
+        subject_suffix: str = "Daily",
+        attachments: Optional[List["Attachment"]] = None,
+        copy_section_html: str = "",
+        copy_section_text: str = "",
+        withheld_html: str = "",
     ) -> bool:
         """
         发送每日/每周/每月摘要邮件
-        
+
         Args:
             digest_date: 摘要日期
             github_items: GitHub项目列表
@@ -341,24 +357,32 @@ class EmailService:
             daily_summary: 每日总结
             recipient: 收件人（可选，默认使用配置）
             subject_suffix: 邮件主题后缀 (Daily/Weekly/Monthly)
-        
+            attachments: 已通过质检的图片附件
+            copy_section_html: 各平台文案区块（HTML）
+            copy_section_text: 各平台文案区块（纯文本）
+            withheld_html: 被扣下的图片说明
+
         Returns:
             是否发送成功
         """
         if not self.is_configured:
             logger.error("邮件服务未配置完整，无法发送")
             return False
-        
+
         recipient = recipient or self.recipient_email
-        
+        attachments = attachments or []
+
         try:
-            # 创建邮件
-            msg = MIMEMultipart("alternative")
+            # mixed 包 alternative：alternative 容器本身不能带附件，
+            # 直接往它上面 attach 图片会让部分客户端把图片当成正文的替代版本，
+            # 正文因此消失。所以正文两版放进内层 alternative，附件作为它的兄弟节点。
+            msg = MIMEMultipart("mixed")
+            body = MIMEMultipart("alternative")
             arxiv_items = arxiv_items or []
             msg["Subject"] = f"🤖 {subject_suffix} AI Digest - {digest_date.strftime('%Y-%m-%d')} | GitHub {len(github_items)} + arXiv {len(arxiv_items)} + YouTube {len(youtube_items)}"
             msg["From"] = self.sender_email
             msg["To"] = recipient
-            
+
             # 纯文本版本
             text_content = self._generate_plain_text(
                 digest_date,
@@ -367,8 +391,10 @@ class EmailService:
                 arxiv_items=arxiv_items,
                 daily_summary=daily_summary,
             )
+            if copy_section_text:
+                text_content += "\n" + copy_section_text
             part1 = MIMEText(text_content, "plain", "utf-8")
-            
+
             # HTML版本
             html_content = self._generate_html_template(
                 digest_date,
@@ -376,16 +402,46 @@ class EmailService:
                 youtube_items,
                 arxiv_items=arxiv_items,
                 daily_summary=daily_summary,
+                copy_section_html=copy_section_html,
+                withheld_html=withheld_html,
             )
             part2 = MIMEText(html_content, "html", "utf-8")
+
+            # 先纯文本后HTML，邮件客户端会优先显示HTML
+            body.attach(part1)
+            body.attach(part2)
+            msg.attach(body)
+
+            for item in attachments:
+                image_part = MIMEImage(
+                    item.content,
+                    _subtype=_image_subtype(item.filename),
+                    name=item.filename,
+                )
+                image_part.add_header(
+                    "Content-Disposition", "attachment", filename=item.filename
+                )
+                msg.attach(image_part)
+            if attachments:
+                logger.info(
+                    "邮件附件 %s 个，总计 %s 字节",
+                    len(attachments),
+                    sum(a.size for a in attachments),
+                )
             
-            # 添加到邮件（先纯文本后HTML，邮件客户端会优先显示HTML）
-            msg.attach(part1)
-            msg.attach(part2)
-            
-            # 发送邮件
+            # sendmail 包含 SMTP DATA。DATA 超时是歧义结果：服务商可能已经收下整封
+            # 信，只是确认响应没在超时前回来。这里必须只尝试一次；自动重试整个发送
+            # 会把同一封摘要投递两到三次。调用方可以记录失败并人工核对收件箱，但不能
+            # 在进程内重放这个非幂等操作。
             context = ssl.create_default_context()
-            
+
+            # timeout 必须显式给。aiosmtplib 的默认是 60 秒，而它**每一次读**都用
+            # 这个值 —— 包括 DATA 命令的响应，那一次要等整封信上传完。带图的信
+            # 在 163 的限速下远超 60 秒，于是抛 SMTPReadTimeoutError，看起来像
+            # 网络不通，实际连接一直是好的。附件预算把载荷压在限速拐点以下，
+            # 这个超时只是兜底余量。
+            timeout = settings.smtp_timeout_seconds
+
             # 根据配置选择连接方式
             if self.use_ssl:
                 # SSL 直连（163/QQ 邮箱使用端口 465）
@@ -393,7 +449,8 @@ class EmailService:
                     hostname=self.smtp_server,
                     port=self.smtp_port,
                     use_tls=True,
-                    tls_context=context
+                    tls_context=context,
+                    timeout=timeout,
                 ) as server:
                     await server.login(self.sender_email, self.app_password)
                     await server.sendmail(self.sender_email, recipient, msg.as_string())
@@ -402,7 +459,8 @@ class EmailService:
                 async with aiosmtplib.SMTP(
                     hostname=self.smtp_server,
                     port=self.smtp_port,
-                    use_tls=False
+                    use_tls=False,
+                    timeout=timeout,
                 ) as server:
                     await server.starttls(context=context)
                     await server.login(self.sender_email, self.app_password)
@@ -455,7 +513,8 @@ class EmailService:
             msg.attach(MIMEText(body, "html", "utf-8"))
             
             context = ssl.create_default_context()
-            
+            timeout = settings.smtp_timeout_seconds
+
             # 根据配置选择连接方式
             if self.use_ssl:
                 # SSL 直连（163/QQ 邮箱使用端口 465）
@@ -463,7 +522,8 @@ class EmailService:
                     hostname=self.smtp_server,
                     port=self.smtp_port,
                     use_tls=True,
-                    tls_context=context
+                    tls_context=context,
+                    timeout=timeout,
                 ) as server:
                     await server.login(self.sender_email, self.app_password)
                     await server.sendmail(self.sender_email, recipient, msg.as_string())
@@ -472,12 +532,13 @@ class EmailService:
                 async with aiosmtplib.SMTP(
                     hostname=self.smtp_server,
                     port=self.smtp_port,
-                    use_tls=False
+                    use_tls=False,
+                    timeout=timeout,
                 ) as server:
                     await server.starttls(context=context)
                     await server.login(self.sender_email, self.app_password)
                     await server.sendmail(self.sender_email, recipient, msg.as_string())
-            
+
             logger.info(f"测试邮件发送成功: {recipient}")
             return True
             

@@ -14,11 +14,60 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # LLM API 配置
+      # 文本模型角色。新名 TEXT_*；旧名 GEMINI_* 作为回退传入，
+      # 老 .env 漏改一处也不会静默变成"密钥为空"（那表现为收集成功、
+      # 每条分析失败，邮件只是看起来变薄，在收件箱里几乎发现不了）。
+      - TEXT_API_KEY=${TEXT_API_KEY:-}
+      - TEXT_BASE_URL=${TEXT_BASE_URL:-}
+      - TEXT_MODEL=${TEXT_MODEL:-}
+      - TEXT_FALLBACK_MODELS=${TEXT_FALLBACK_MODELS:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_BASE_URL=${GEMINI_BASE_URL:-}
-      - GEMINI_MODEL=${GEMINI_MODEL:-kimi-k2.5}
+      - GEMINI_MODEL=${GEMINI_MODEL:-}
       - GEMINI_FALLBACK_MODELS=${GEMINI_FALLBACK_MODELS:-}
+
+      # 视觉质检角色（多模态）。与文本角色独立，禁止互为 fallback。
+      # .cn 与 .ai 是两个独立平台，账号与密钥不通用；国内服务器只走 .cn。
+      - VISION_API_KEY=${VISION_API_KEY:-}
+      - VISION_BASE_URL=${VISION_BASE_URL:-https://api.moonshot.cn/v1}
+      - VISION_MODEL=${VISION_MODEL:-kimi-k3}
+
+      # 生图角色（火山方舟 Seedream）。Lite 才支持组图，不要换 Pro。
+      - IMAGE_GEN_API_KEY=${IMAGE_GEN_API_KEY:-}
+      - IMAGE_GEN_BASE_URL=${IMAGE_GEN_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
+      - IMAGE_GEN_MODEL=${IMAGE_GEN_MODEL:-doubao-seedream-5-0-260128}
+      - IMAGE_GEN_TIMEOUT_SECONDS=${IMAGE_GEN_TIMEOUT_SECONDS:-120}
+      - IMAGE_GEN_MAX_PER_RUN=${IMAGE_GEN_MAX_PER_RUN:-5}
+      - IMAGE_BACKGROUND_CACHE_DIR=${IMAGE_BACKGROUND_CACHE_DIR:-/app/data/backgrounds}
+      - IMAGE_BACKGROUND_CACHE_VERSION=${IMAGE_BACKGROUND_CACHE_VERSION:-1}
+      # 水印默认关闭；provider 默认 true 会盖"AI生成"
+      - IMAGE_GEN_WATERMARK=${IMAGE_GEN_WATERMARK:-false}
+
+      # 长图渲染与视觉质检。三个开关默认全关，容器内验证通过后再打开。
+      - RENDER_ENABLED=${RENDER_ENABLED:-false}
+      - IMAGE_GEN_ENABLED=${IMAGE_GEN_ENABLED:-false}
+      - VISUAL_QA_ENABLED=${VISUAL_QA_ENABLED:-false}
+      - RENDER_OUTPUT_DIR=/app/data/renders
+      - RENDER_DEVICE_SCALE_FACTOR=${RENDER_DEVICE_SCALE_FACTOR:-2}
+      - RENDER_SEGMENT_MAX_HEIGHT=${RENDER_SEGMENT_MAX_HEIGHT:-15000}
+      - RENDER_TIMEOUT_SECONDS=${RENDER_TIMEOUT_SECONDS:-120}
+      - RENDER_RETENTION_DAYS=${RENDER_RETENTION_DAYS:-14}
+      - QA_MAX_ATTEMPTS=${QA_MAX_ATTEMPTS:-3}
+      - QA_MAX_REQUEST_BYTES=${QA_MAX_REQUEST_BYTES:-62914560}
+      - QA_MIN_INSPECT_DIMENSION=${QA_MIN_INSPECT_DIMENSION:-900}
+      - QA_TIMEOUT_SECONDS=${QA_TIMEOUT_SECONDS:-300}
+      # 这两个写成透传形式（不带 =${...:-默认值}），默认值只存在于 config.py。
+      # 带默认值的写法把同一个数字复制到了两个地方，而 compose 这一份会**赢** ——
+      # 实测：改了 config.py 的 12MB，容器里读到的仍是 compose 的 20MB，
+      # 于是"改了默认值但没生效"，且没有任何报错。透传形式下未设置的变量在
+      # 容器里根本不出现（已用 docker run --rm -e FOO 验证），pydantic 取
+      # config.py 的默认值 —— 一个数字只有一个出处。
+      - ATTACHMENT_BUDGET_BYTES
+      - SMTP_TIMEOUT_SECONDS
+
+      # 平台文案产出
+      - PUBLISH_PLATFORMS=${PUBLISH_PLATFORMS:-xiaohongshu,wechat,x,instagram,zhihu,reddit}
+      - PUBLISHERS_ENABLED=${PUBLISHERS_ENABLED:-false}
       
       # GitHub API
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
@@ -35,7 +84,7 @@ services:
       - GITHUB_ACTIVITY_SIGNAL_THRESHOLD=${GITHUB_ACTIVITY_SIGNAL_THRESHOLD:-10}
 
       # arXiv and dynamic research selection
-      - ARXIV_CATEGORIES=${ARXIV_CATEGORIES:-cs.AI,cs.CL,cs.CV,cs.LG,cs.IR}
+      - ARXIV_CATEGORIES=${ARXIV_CATEGORIES:-cs.AI,cs.CL,cs.CV,cs.LG,cs.IR,cs.RO}
       - ARXIV_CANDIDATE_LIMIT=${ARXIV_CANDIDATE_LIMIT:-24}
       - ARXIV_TIMEOUT_SECONDS=${ARXIV_TIMEOUT_SECONDS:-20}
       - TARGET_ITEMS=${TARGET_ITEMS:-10}

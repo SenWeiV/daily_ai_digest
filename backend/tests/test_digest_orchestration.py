@@ -1,6 +1,8 @@
 import asyncio
+from datetime import date
 from unittest.mock import AsyncMock
 
+import app.services.digest_service as digest_module
 from app.schemas import ArxivDigestItem
 from app.services.digest_service import DigestService
 
@@ -37,6 +39,80 @@ def test_source_collection_starts_youtube_with_research_sources():
     service._fetch_github_data.assert_awaited_once_with("daily")
     service._fetch_arxiv_data.assert_awaited_once_with()
     service._fetch_youtube_data.assert_awaited_once_with()
+
+
+def test_no_email_probe_does_not_suppress_the_scheduled_run(monkeypatch):
+    """临时 send_email=False 运行不能制造当天记录，令晚间调度误跳过。"""
+    service = DigestService()
+    records = {}
+    created_records = []
+
+    class _DB:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    async def get_existing(db, record_date, digest_type):
+        return records.get((record_date, digest_type))
+
+    async def create_record(db, record):
+        records[(record.digest_date, record.digest_type)] = record
+        created_records.append(record)
+
+    monkeypatch.setattr(digest_module, "get_db", lambda: _DB())
+    monkeypatch.setattr(
+        digest_module.DigestRecordModel,
+        "get_by_date_and_type",
+        get_existing,
+    )
+    monkeypatch.setattr(
+        digest_module.DigestRecordModel,
+        "create_with_type",
+        create_record,
+    )
+    monkeypatch.setattr(
+        digest_module.ExecutionLogModel,
+        "create",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        service,
+        "_collect_source_data",
+        AsyncMock(return_value=([], [], [])),
+    )
+    monkeypatch.setattr(
+        service,
+        "_analyze_arxiv_items",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        digest_module.github_agent,
+        "analyze_selected_repos",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(digest_module.email_service, "sender_email", "")
+    monkeypatch.setattr(digest_module.email_service, "app_password", "")
+    monkeypatch.setattr(digest_module.email_service, "recipient_email", "")
+
+    probe = asyncio.run(
+        service.generate_digest(
+            "daily", target_date=date(2026, 8, 3), send_email=False, force=True
+        )
+    )
+    assert probe[0] is True
+    assert created_records == []
+    assert records == {}
+
+    scheduled = asyncio.run(
+        service.generate_digest(
+            "daily", target_date=date(2026, 8, 3), send_email=True, force=False
+        )
+    )
+    assert scheduled[0] is True
+    assert len(created_records) == 1
+    assert len(records) == 1
 
 
 def test_arxiv_analysis_uses_bounded_concurrency_and_isolates_failures(monkeypatch):

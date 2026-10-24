@@ -21,7 +21,7 @@ from youtube_transcript_api._errors import (
     VideoUnavailable
 )
 
-from app.config import settings
+from app.config import secret_value, settings
 from app.schemas import YouTubeDigestItem
 from app.agents.gemini_analyzer import gemini_analyzer
 from app.utils.helpers import format_number, parse_iso8601_duration, format_duration
@@ -52,7 +52,7 @@ class YouTubeAgent:
     
     def __init__(self):
         """初始化 YouTube 客户端"""
-        self.api_key = settings.youtube_api_key
+        self.api_key = secret_value(settings.youtube_api_key)
         self.client = None
         self.top_n = settings.youtube_top_n
         self._network_available = None  # 缓存网络状态

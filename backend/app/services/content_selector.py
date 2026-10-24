@@ -145,6 +145,55 @@ def _coverage_order(items: list[ResearchItem]) -> list[ResearchItem]:
     return selected
 
 
+def _breadth_first_trim(ordered_items: list[ResearchItem], limit: int) -> list[ResearchItem]:
+    """Trim to `limit` by taking one item per represented topic before a second from any.
+
+    Only applies when there are more qualifying items than the ceiling allows. Below the
+    ceiling this is never called, so selection behaviour is unchanged there. Within a topic
+    the incoming order decides, so the result stays deterministic. Items carrying no topic
+    share one bucket rather than being dropped.
+    """
+    if len(ordered_items) <= limit:
+        return list(ordered_items)
+
+    position = {_stable_key(item): index for index, item in enumerate(ordered_items)}
+    buckets: dict[str, list[ResearchItem]] = {}
+    for item in ordered_items:
+        topics = _item_topics(item) or ("",)
+        for topic in topics:
+            buckets.setdefault(topic, []).append(item)
+
+    # A topic's turn order is set by its strongest item, so the ordering does not depend
+    # on dict insertion. Topic name breaks ties.
+    topic_order = sorted(buckets, key=lambda topic: (position[_stable_key(buckets[topic][0])], topic))
+
+    selected: list[ResearchItem] = []
+    taken: set[str] = set()
+    cursors = {topic: 0 for topic in buckets}
+
+    while len(selected) < limit:
+        progressed = False
+        for topic in topic_order:
+            if len(selected) >= limit:
+                break
+            bucket = buckets[topic]
+            index = cursors[topic]
+            while index < len(bucket) and _stable_key(bucket[index]) in taken:
+                index += 1
+            cursors[topic] = index
+            if index >= len(bucket):
+                continue
+            item = bucket[index]
+            cursors[topic] = index + 1
+            taken.add(_stable_key(item))
+            selected.append(item)
+            progressed = True
+        if not progressed:
+            break
+
+    return selected
+
+
 def select_research_items(
     github_items: Iterable[GitHubDigestItem],
     arxiv_items: Iterable[ArxivDigestItem],
@@ -161,7 +210,9 @@ def select_research_items(
     a_items = _coverage_order([item for item in combined if _item_grade(item) == "A"])
     b_items = _coverage_order([item for item in combined if _item_grade(item) == "B"])
 
-    selected: list[ResearchItem] = a_items[:max_items]
+    # Above the ceiling, keep topic breadth rather than letting one active topic take the
+    # whole digest. Below it every A item is selected, so this is inert.
+    selected: list[ResearchItem] = _breadth_first_trim(a_items, max_items)
     if len(selected) < target_items:
         selected.extend(b_items[: min(target_items - len(selected), max_items - len(selected))])
 

@@ -62,10 +62,11 @@ nano .env
 **关键配置项：**
 
 ```env
-# LLM API 配置（推荐 Kimi，国内直连）
-GEMINI_API_KEY=<your-kimi-api-key>
-GEMINI_BASE_URL=https://api.moonshot.cn/v1
-GEMINI_MODEL=moonshot-v1-8k
+# LLM API 配置（默认 DeepSeek V4 Flash，国内直连）
+TEXT_API_KEY=<your-deepseek-api-key>
+TEXT_BASE_URL=https://api.deepseek.com
+TEXT_MODEL=deepseek-v4-flash
+# 分析任务用低温；DeepSeek 思考模式开启时会忽略该值
 
 # GitHub Token 与研究内容发现
 GITHUB_TOKEN=<your-github-token>
@@ -101,6 +102,37 @@ DIGEST_RECIPIENT=your_email@gmail.com
 # 启动服务
 ./deploy-docker.sh start
 ```
+
+**构建为什么必须走国内镜像源**（默认已配好，改动前先读这段）：
+
+镜像里的 `pip` 与 `apt` 不会继承宿主机的 `/etc/pip.conf`。在百度云这台机器上实测：
+
+| 源 | 结果 |
+|---|---|
+| `pypi.org` | 25 KB/s，且 `google-auth>=2.15.0` 报 `from versions: none`，构建直接失败 |
+| `deb.debian.org` | 23 KB/s，`apt-get install` 那一层跑了 8296 秒（2 小时 18 分） |
+| `mirrors.baidubce.com/pypi` | 45 MB/s |
+| `mirrors.baidubce.com/debian` | 192 MB/s |
+
+所以 `Dockerfile.backend` 把两个源都写成了 `ARG`，默认值指向百度云镜像站。在别的网络里构建时用 `--build-arg` 换掉，不要删掉这套机制退回默认源。
+
+Chromium 相关的三处也是踩过才定下来的，改之前请知道代价：
+
+- **不能用 `playwright install --with-deps`**。它探测不出 Debian 13 (trixie)，回落到 ubuntu20.04 的包名，`libicu66`、`libvpx6`、`libwebp6`、`libjpeg-turbo8`、`ttf-unifont` 等 9 个包 `Unable to locate`，打印 `Failed to install browser dependencies` —— 然后**以退出码 0 结束**。构建照常成功，缺库要到第一次真渲染 `chromium.launch()` 才炸。运行库因此显式列在 `apt-get install` 里，包名取自 trixie 自己的 chromium 包依赖（`t64` 后缀是这个版本的 64 位 `time_t` 过渡命名）。
+- **必须放大下载超时**。Playwright 的下载连接超时硬编码 30 秒，chromium 包 169MB，这台机器约 1.2 MB/s —— 无论走哪个源都必然超时，表现为连试三次 `Download failure, code=1`。`PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=600000` 是唯一的旁路。
+- **不要把 `PLAYWRIGHT_DOWNLOAD_HOST` 指向 npmmirror**。那边只镜像了 `chromium`，没有 `chromium-headless-shell`（1148 版本 404），而 1.49 的 headless 启动用的正是 headless shell，缺它等于浏览器只装了一半。
+
+### 4.1 渲染链路的容器内自检
+
+渲染路径在单元测试里全是假的（Playwright 被 fake 掉），本机 macOS 连 `fontconfig` 都没有，`preflight()` 按设计直接拒绝渲染。也就是说"应该能渲染"在容器里真跑一遍之前只是推断。构建完成后跑一次：
+
+```bash
+docker run --rm -e PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=600000 \
+  -v /opt/daily_ai_digest/backend:/app/backend:ro \
+  --entrypoint sh <镜像名> /app/backend/tests/manual/container_render_probe.sh
+```
+
+它复用生产代码的 `font_stack()` 真启动一次浏览器，然后落到像素上判豆腐块：每个字必须有墨、不同的字必须画得不一样（方框的形状与字符无关，所有缺字形的字会得到逐像素相同的裁片）、emoji 裁片必须有饱和色。`fc-list` 有输出只说明 fontconfig 解析到了族名，不等于 Chromium 画得出来。
 
 ### 5. 验证部署
 
@@ -203,7 +235,7 @@ docker compose logs --since=10m backend | grep -E '数据库初始化完成|定�
 docker-compose logs backend
 
 # 只检查必要变量是否存在，不输出密钥值
-docker exec daily-ai-digest-backend python -c "import os; print({k: bool(os.getenv(k)) for k in ('GEMINI_API_KEY', 'GITHUB_TOKEN', 'EMAIL_PASSWORD')})"
+docker exec daily-ai-digest-backend python -c "import os; print({k: bool(os.getenv(k)) for k in ('TEXT_API_KEY', 'GITHUB_TOKEN', 'EMAIL_PASSWORD')})"
 ```
 
 ### 问题2：API 无法访问
@@ -227,7 +259,7 @@ docker ps -a
 docker exec -it daily-ai-digest-backend bash
 python -c "
 import httpx
-response = httpx.get('https://api.moonshot.cn/v1')
+response = httpx.get('https://api.deepseek.com/v1/models')
 print(response.status_code)
 "
 ```
@@ -246,7 +278,7 @@ print(response.status_code)
 ## 📝 注意事项
 
 1. **首次部署**：必须先运行 `./deploy-docker.sh setup` 创建 `.env` 文件
-2. **API 密钥**：确保使用公网可访问的 LLM API（如 Kimi、DeepSeek），不要使用内网地址
+2. **API 密钥**：确保使用公网可访问的 LLM API（默认 DeepSeek，也可用 Kimi、通义），不要使用内网地址。密钥必须与 `TEXT_BASE_URL` 属于同一家服务商。
 3. **数据备份**：定期备份 `data/` 目录，防止数据丢失
 4. **端口冲突**：如果 8000 端口被占用，修改 `docker-compose.yml` 中的端口映射
 

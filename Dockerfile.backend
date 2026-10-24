@@ -7,15 +7,89 @@ FROM m.daocloud.io/docker.io/library/python:3.11-slim
 # 设置工作目录
 WORKDIR /app
 
+# 软件源。写成 ARG 而不是写死，是为了让在别处构建时能换掉；默认值指向百度云
+# 镜像站，因为这个项目只在百度云服务器上构建，而那台机器直连公网源实测：
+#   deb.debian.org      23 KB/s   —— apt 那一层曾跑了 8296 秒（2 小时 18 分）
+#   pypi.org            25 KB/s   —— 且解析不出 google-auth，构建直接失败
+#   mirrors.baidubce.com/debian   192 MB/s
+#   mirrors.baidubce.com/pypi      45 MB/s
+# 宿主机 /etc/pip.conf 里早就配了这个源，但那份配置不会进容器。
+ARG DEBIAN_MIRROR=http://mirrors.baidubce.com/debian
+ARG PYPI_INDEX_URL=http://mirrors.baidubce.com/pypi/simple/
+ARG PYPI_TRUSTED_HOST=mirrors.baidubce.com
+
+# Debian 13 (trixie) 用 deb822 格式的 debian.sources，不再是 sources.list，
+# 改错文件会静默无效（apt 继续用原来的源，只是慢，不报错）。
+RUN printf 'Types: deb\nURIs: %s\nSuites: trixie trixie-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\n' \
+      "$DEBIAN_MIRROR" > /etc/apt/sources.list.d/debian.sources
+
 # 安装系统依赖
+# 字体说明（这一段决定图里会不会出现豆腐块）：
+# - fonts-noto-cjk 提供简体中文字形。缺它时 Chromium 不报错，直接画空心方框。
+# - fonts-noto-color-emoji 是 CBDT 位图格式，Chromium 能渲染；
+#   SVG 格式的 emoji 字体（如 Twemoji 的 SVG 版）Chromium 不渲染，会退成方框。
+# - fontconfig 提供 fc-list/fc-match，启动自检靠它确认字体真的被解析到。
+#
+# Chromium 运行库为什么显式列出，而不是交给 playwright install --with-deps：
+# --with-deps 探测不出 trixie，回落到 ubuntu20.04 的包名列表，于是 libicu66、
+# libvpx6、libwebp6、libjpeg-turbo8、ttf-unifont 等 9 个包全部 Unable to locate，
+# 打印 "Failed to install browser dependencies" —— 然后**以退出码 0 结束**。
+# 构建照常成功，缺库要到 chromium.launch() 时才炸，也就是到第一次真渲染才发现。
+# 下面这份列表取自 Debian trixie 自己的 chromium 包依赖（apt-cache depends），
+# 是这个发行版的权威答案；t64 后缀是 trixie 的 64 位 time_t 过渡命名。
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libsqlite3-dev \
+    fontconfig \
+    fonts-noto-cjk \
+    fonts-noto-color-emoji \
+    libasound2t64 \
+    libatk-bridge2.0-0t64 \
+    libatk1.0-0t64 \
+    libatspi2.0-0t64 \
+    libcairo2 \
+    libcups2t64 \
+    libdbus-1-3 \
+    libdrm2 \
+    libexpat1 \
+    libgbm1 \
+    libglib2.0-0t64 \
+    libgtk-3-0t64 \
+    libnspr4 \
+    libnss3 \
+    libpango-1.0-0 \
+    libx11-6 \
+    libxcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxkbcommon0 \
+    libxrandr2 \
+    libudev1 \
+    zlib1g \
+    && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制依赖文件并安装
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -i "$PYPI_INDEX_URL" --trusted-host "$PYPI_TRUSTED_HOST" \
+    -r requirements.txt
+
+# 下载 Chromium 二进制。--with-deps 已在上面手工展开，这里只下浏览器本体。
+#
+# 超时必须显式放大：Playwright 的下载连接超时是硬编码的 30 秒
+# （registry/index.js: +(env||'0') || 30_000），而 chromium 包 169MB，
+# 从这台机器实测约 1.2 MB/s —— 也就是无论走官方 CDN 还是国内镜像都必然超时，
+# 表现为连试三次全部 "Download failure, code=1"。这个环境变量是唯一的旁路。
+#
+# 不改 PLAYWRIGHT_DOWNLOAD_HOST 走 npmmirror：那边只镜像了 chromium，
+# 没有 chromium-headless-shell（1148 版本 404）。1.49 的 headless 启动用的
+# 正是 headless shell，缺它就等于浏览器装了一半。官方 CDN 两个包都在，
+# 实测 1.2 MB/s 与 1.1 MB/s，配上放大的超时足够。
+# 不写成 ENV：它只在这一层需要，写成 ENV 会留在运行时镜像里，
+# 让一个纯构建期的旁路看起来像一项运行时配置。
+RUN PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=600000 playwright install chromium
 
 # 复制后端代码
 COPY backend/ ./backend/

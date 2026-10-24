@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 from github import Github, GithubException
 from github.Repository import Repository
 
-from app.config import settings
+from app.config import secret_value, settings
 from app.schemas import GitHubDigestItem
 from app.agents.gemini_analyzer import gemini_analyzer
 from app.utils.helpers import truncate_text
@@ -43,6 +43,16 @@ class GitHubAgent:
         'topic:vision-language-model',
         'topic:llm-evaluation',
         'topic:ai-agents',
+        # expand-research-directions 新增：每条都是"限定领域短语 + 内容词"，
+        # 不允许出现 robot/3d/video 这类单字宽词构成的查询
+        '"robot learning" policy',
+        '"vision-language-action" model',
+        '"gaussian splatting" reconstruction',
+        '"novel view synthesis" implementation',
+        '"model context protocol" server',
+        '"agent skill" framework',
+        '"text-to-video" model',
+        'comfyui workflow',
     )
     
     # Trending 网络异常类型
@@ -57,7 +67,7 @@ class GitHubAgent:
     
     def __init__(self):
         """初始化 GitHub 客户端"""
-        self.token = settings.github_token
+        self.token = secret_value(settings.github_token)
         self.client = None
         self.top_n = settings.github_top_n
         self._analysis_context: dict[str, Dict[str, Any]] = {}

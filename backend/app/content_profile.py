@@ -66,7 +66,85 @@ RESEARCH_PROFILES: tuple[ResearchProfile, ...] = (
             "deep learning",
         ),
     ),
+    # --- 以下四个 profile 由 expand-research-directions 新增 ---
+    # 领域词只收限定短语，不收 robot/3d/video/animation 这类单字宽词：
+    # 两信号门只要求命中一个领域词，宽词配上近乎通用的内容词会放进几乎任何仓库。
+    ResearchProfile(
+        "physical-ai",
+        (
+            "physical ai", "embodied ai", "embodied intelligence", "embodied agent",
+            "humanoid robot", "robot learning", "robot manipulation",
+            "dexterous manipulation", "bimanual manipulation", "legged robot",
+            "locomotion", "whole-body control", "vla", "vision-language-action",
+            "robot foundation model", "sim-to-real", "sim2real", "robot simulation",
+            "isaac lab", "gr00t", "world model", "lerobot", "openvla", "smolvla",
+            "genesis physics",
+        ),
+        (
+            "vla model", "robot policy", "imitation learning", "diffusion policy",
+            "flow matching policy", "embodied benchmark", "robot dataset",
+            "teleoperation", "action chunking", "transformer policy",
+            "benchmark", "dataset", "implementation", "paper",
+        ),
+    ),
+    ResearchProfile(
+        "spatial-ai",
+        (
+            "spatial intelligence", "3d gaussian splatting", "3dgs", "gaussian splatting",
+            "slam", "visual slam", "nerf", "neural radiance field",
+            "novel view synthesis", "neural rendering", "3d reconstruction",
+            "scene reconstruction", "feed-forward reconstruction", "4d reconstruction",
+            "generative 3d", "3d scene generation",
+        ),
+        (
+            "gaussian splat", "point cloud", "camera pose estimation", "monocular depth",
+            "photogrammetry", "implicit representation", "multi-view stereo",
+            "semantic 3d", "benchmark", "dataset", "implementation", "paper",
+        ),
+    ),
+    ResearchProfile(
+        "fullstack-skill-mcp",
+        (
+            "mcp server", "model context protocol", "mcp registry", "mcp client",
+            "agent skill", "claude code skill", "skill.md",
+            "gsap", "framer motion", "motion one", "anime.js", "lenis", "rive",
+            "remotion", "scrolltrigger", "view transitions", "server components",
+            "edge runtime",
+        ),
+        (
+            "mcp integration", "tool calling", "web animation", "react animation",
+            "spring animation", "keyframe animation", "component library",
+            "design system", "monorepo", "api gateway", "orm",
+            "implementation", "framework",
+        ),
+    ),
+    ResearchProfile(
+        "creative-marketing",
+        (
+            "video generation", "text-to-video", "image-to-video", "video diffusion",
+            "wan video", "hunyuan video", "ltx video", "kling", "runway gen",
+            "comfyui", "remotion", "manim", "motion canvas", "motion graphics",
+            "ai marketing", "marketing automation", "social media automation",
+            "generative engine optimization", "programmatic video",
+        ),
+        (
+            "comfyui workflow", "video model", "caption generation", "content calendar",
+            "ad generation", "render pipeline", "template",
+            "implementation", "framework", "api",
+        ),
+    ),
 )
+
+# 领域词表禁止收录的单字宽词。每个词都覆盖 GitHub 上极大比例的仓库，
+# 而两信号门只要求一个领域命中，因此宽词等于取消了领域约束。
+BANNED_DOMAIN_TERMS: frozenset[str] = frozenset({
+    "robot", "3d", "video", "animation", "marketing", "scene", "simulation",
+    "control", "content", "seo", "api", "fullstack", "react", "nextjs", "vue",
+    "tailwind", "node", "diffusion", "transformer",
+})
+
+# 唯一允许跨 profile 重复的领域词：remotion 既是 React 开发工具也是视频渲染工具。
+DUPLICATE_DOMAIN_TERM_EXCEPTIONS: frozenset[str] = frozenset({"remotion"})
 
 
 def normalize_text(*parts: Any) -> str:

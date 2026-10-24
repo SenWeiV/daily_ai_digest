@@ -204,7 +204,7 @@ async def get_config():
         # 服务状态
         "github_configured": bool(settings.github_token),
         "youtube_configured": bool(settings.youtube_api_key),
-        "gemini_configured": bool(settings.gemini_api_key),
+        "gemini_configured": bool(settings.text_api_key),
         "email_configured": email_configured
     }
 

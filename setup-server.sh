@@ -104,11 +104,30 @@ if [ ! -f ".env" ]; then
 # Daily AI Digest - 环境变量配置
 # 请修改以下配置为你的实际值
 
-# LLM API 配置（推荐 Kimi）
-GEMINI_API_KEY=your_api_key_here
-GEMINI_BASE_URL=https://api.moonshot.cn/v1
-GEMINI_MODEL=moonshot-v1-8k
-GEMINI_FALLBACK_MODELS=
+# 文本模型角色（默认 DeepSeek V4 Flash，国内直连）
+# 请求只发 model + messages，不写死 temperature / max_tokens：
+# 其余参数全用 provider 默认值，思考模式因此保持开启。
+TEXT_API_KEY=your_deepseek_api_key_here
+TEXT_BASE_URL=https://api.deepseek.com
+TEXT_MODEL=deepseek-v4-flash
+TEXT_FALLBACK_MODELS=
+
+# 视觉质检角色（看图，独立配置，禁止与文本角色互为 fallback）
+# 端点必须是 .cn：.cn 与 .ai 是两个独立平台，密钥不通用。
+VISION_API_KEY=
+VISION_BASE_URL=https://api.moonshot.cn/v1
+VISION_MODEL=kimi-k3
+
+# 生图角色（火山方舟 Seedream）。必须 Lite，Pro 不支持组图。
+IMAGE_GEN_API_KEY=
+IMAGE_GEN_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+IMAGE_GEN_MODEL=doubao-seedream-5-0-260128
+
+# 长图渲染与质检开关。默认全关，容器内验证通过后再逐个打开。
+RENDER_ENABLED=false
+IMAGE_GEN_ENABLED=false
+VISUAL_QA_ENABLED=false
+PUBLISHERS_ENABLED=false
 
 # GitHub Token
 GITHUB_TOKEN=your_github_token_here
@@ -139,7 +158,7 @@ EOF
     print_info "  nano $PROJECT_DIR/.env"
     print_info ""
     print_info "必须配置的项目:"
-    print_info "  1. GEMINI_API_KEY - LLM API 密钥"
+    print_info "  1. TEXT_API_KEY - 文本模型 API 密钥"
     print_info "  2. GITHUB_TOKEN - GitHub Token"
     print_info "  3. GMAIL_SENDER/GMAIL_APP_PASSWORD - 邮件配置"
     print_info "=============================================="

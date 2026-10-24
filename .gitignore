@@ -23,6 +23,7 @@ data/*.db
 *.swp
 *.swo
 .DS_Store
+._*
 
 # Node
 node_modules/
@@ -39,3 +40,9 @@ build/
 *.tmp
 *.temp
 /tmp/
+# 服务器接入文档（含公网 IP 与部署路径），只存在于服务器上，不入库也不被同步覆盖
+百度云服务器接入参数.md
+# 私有部署资料（含服务器 IP、账号密码），不要推到公开仓库
+docs/private/
+百度云服务器连接指南.md
+资料索引.md

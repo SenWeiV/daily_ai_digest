@@ -12,7 +12,8 @@ import google.generativeai as genai
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from app.config import settings
+from app.config import secret_value, settings
+from app.model_roles import role_usage
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +23,9 @@ class GeminiAnalyzer:
     
     def __init__(self):
         """初始化 Gemini 客户端"""
-        self.api_key = settings.gemini_api_key
-        self.base_url = settings.gemini_base_url.rstrip("/")
-        self.model_name = settings.gemini_model
+        self.api_key = secret_value(settings.text_api_key)
+        self.base_url = settings.text_base_url.rstrip("/")
+        self.model_name = settings.text_model
         self.model_names = self._build_model_list()
         self.models: Dict[str, genai.GenerativeModel] = {}
         self.active_model_name: Optional[str] = None
@@ -51,7 +52,11 @@ class GeminiAnalyzer:
                     )
             self.active_model_name = self.model_names[0] if self.model_names else None
             if self.use_openai_compatible:
-                logger.info(f"LLM 分析引擎初始化完成（OpenAI兼容接口: {self.base_url}），模型: {', '.join(self.model_names)}")
+                host = urlparse(self.base_url).hostname or self.base_url
+                logger.info(
+                    f"LLM 分析引擎初始化完成 | 模型={self.active_model_name} | 端点={host} "
+                    f"| 备选={', '.join(self.model_names[1:]) or '无'}"
+                )
             else:
                 logger.info(f"Gemini 分析引擎初始化完成，模型链路: {', '.join(self.model_names)}")
         else:
@@ -59,9 +64,9 @@ class GeminiAnalyzer:
 
     def _build_model_list(self) -> List[str]:
         """构建模型优先级列表（主模型 + 回退模型）"""
-        raw_models = [settings.gemini_model]
-        if settings.gemini_fallback_models:
-            raw_models.extend(settings.gemini_fallback_models.split(","))
+        raw_models = [settings.text_model]
+        if settings.text_fallback_models:
+            raw_models.extend(settings.text_fallback_models.split(","))
 
         models: List[str] = []
         seen = set()
@@ -150,6 +155,7 @@ class GeminiAnalyzer:
 
                 # 更新 Token 计数（估算）
                 self._token_count += len(prompt) // 4 + len(response_text) // 4
+                role_usage.record("text")
                 self.active_model_name = model_name
                 return response_text
             except Exception as e:
@@ -162,17 +168,7 @@ class GeminiAnalyzer:
 
     async def _generate_with_openai_compatible(self, prompt: str, model_name: str) -> str:
         """通过 OpenAI 兼容接口生成内容"""
-        parsed = urlparse(self.base_url)
-        base_path = parsed.path.rstrip("/")
-        # 支持 Kimi/DeepSeek/通义等 OpenAI 兼容接口
-        # 如果 base_url 已经包含 /v1，则直接添加 /chat/completions
-        # 否则添加 /v1/chat/completions
-        if base_path.endswith("/v1") or base_path.endswith("/v1/"):
-            endpoint = f"{self.base_url.rstrip('/')}/chat/completions"
-        elif base_path:
-            endpoint = f"{self.base_url.rstrip('/')}/chat/completions"
-        else:
-            endpoint = f"{self.base_url.rstrip('/')}/v1/chat/completions"
+        endpoint = self._resolve_endpoint()
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -180,13 +176,23 @@ class GeminiAnalyzer:
         payload = {
             "model": model_name,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 1,  # Kimi API 只接受 temperature=1
-            "max_tokens": 8192,
         }
+        # 刻意只发 model + messages。DeepSeek V4 的思考模式默认开启，实测这种
+        # 最小请求返回 content 与 reasoning_content 两者都有；一旦显式带上
+        # temperature 或 max_tokens，就等于用我们猜的常量去覆盖 provider 默认值：
+        # max_tokens 会在长 README 上截断答案（截断的 JSON 解析失败，落成"分析为空"），
+        # temperature 则在部分模型上直接被拒（K3 只接受 1）。
+        # 需要压低随机性时改 provider 侧或换模型，不在这里写死。
 
         async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
             response = await client.post(endpoint, headers=headers, json=payload)
-            response.raise_for_status()
+            if response.status_code >= 400:
+                # 凭据错误/配额错误必须带上 provider 状态，不能表现为"分析为空"
+                detail = response.text.strip()[:300]
+                logger.error(
+                    f"LLM 接口返回错误 [{model_name}] status={response.status_code}: {detail}"
+                )
+                response.raise_for_status()
             raw_text = response.text.strip()
             if not raw_text:
                 raise RuntimeError("OpenAI兼容接口返回空响应")
@@ -195,7 +201,9 @@ class GeminiAnalyzer:
             except json.JSONDecodeError:
                 return raw_text
 
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        message = data.get("choices", [{}])[0].get("message", {}) or {}
+        content = message.get("content", "")
+
         if isinstance(content, list):
             parts = []
             for item in content:
@@ -203,9 +211,34 @@ class GeminiAnalyzer:
                     parts.append(item.get("text", ""))
             content = "\n".join(parts)
 
+        if content is None:
+            content = ""
         if not isinstance(content, str):
             content = str(content)
-        return content.strip()
+        content = content.strip()
+
+        if not content:
+            # 思考模式可能只回 reasoning_content。推理链不是答案，绝不能当分析结果存下去
+            reasoning = message.get("reasoning_content") or ""
+            if reasoning:
+                logger.debug(
+                    f"LLM 仅返回推理内容，无答案正文 [{model_name}]，推理长度={len(reasoning)}"
+                )
+                raise RuntimeError("LLM 仅返回推理内容，缺少答案正文")
+
+        return content
+
+    def _resolve_endpoint(self) -> str:
+        """构建 chat completions 端点
+
+        base_url 带路径（如 /v1、/compatible-mode/v1、/api/v3）视为已含版本段，
+        直接追加 /chat/completions；不带路径则补 /v1/chat/completions。
+        """
+        base = self.base_url.rstrip("/")
+        base_path = urlparse(base).path.rstrip("/")
+        if base_path:
+            return f"{base}/chat/completions"
+        return f"{base}/v1/chat/completions"
     
     def _parse_json_response(self, text: str) -> Dict[str, Any]:
         """解析 JSON 格式的响应"""

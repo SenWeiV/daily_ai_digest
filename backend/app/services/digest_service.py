@@ -9,6 +9,7 @@ from typing import Optional, Tuple, List, Literal
 
 from app.config import settings
 from app.database import get_db
+from app.model_roles import role_usage
 from app.schemas import DigestRecord, GitHubDigestItem, ArxivDigestItem, YouTubeDigestItem, ExecutionLog
 from app.models import DigestRecordModel, ExecutionLogModel
 from app.agents.github_agent import github_agent
@@ -17,6 +18,7 @@ from app.agents.youtube_agent import youtube_agent
 from app.agents.gemini_analyzer import gemini_analyzer
 from app.services.email_service import email_service
 from app.services.content_selector import select_research_items
+from app.services.digest_assets import AssetBundle, build_assets, cleanup_old_renders
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +74,8 @@ class DigestService:
         
         try:
             logger.info(f"开始生成 [{digest_type}] {record_date} 的摘要...")
+            # 每次运行独立计数，否则同一进程内多次运行会把上一次的调用算进来
+            role_usage.reset()
             
             # 检查是否已有数据（使用组合键：日期+类型）
             async with get_db() as db:
@@ -117,11 +121,16 @@ class DigestService:
                 email_sent=False
             )
             
-            # 保存到数据库
-            async with get_db() as db:
-                await DigestRecordModel.create_with_type(db, digest_record)
-                logger.info(f"[{digest_type}] 摘要数据已保存到数据库")
-            
+            # 只有会走正式投递路径的运行才写入日报记录。临时探针常用
+            # send_email=False；如果把它也记成当天记录，晚上的 force=False
+            # 调度会误以为日报已经完成，从而跳过真正的邮件。
+            if send_email:
+                async with get_db() as db:
+                    await DigestRecordModel.create_with_type(db, digest_record)
+                    logger.info(f"[{digest_type}] 摘要数据已保存到数据库")
+            else:
+                logger.info(f"[{digest_type}] 临时不发邮件运行，不写入日报记录")
+
             # 发送邮件
             email_sent = False
             if send_email and email_service.is_configured:
@@ -131,16 +140,26 @@ class DigestService:
                         "weekly": "每周",
                         "monthly": "每月"
                     }[digest_type]
-                    
+
+                    # 资产先于发送：一封邮件带走正文、文案和全部通过质检的图，
+                    # 不拆信、不为迟到的资产补发第二封。宁可等，不能早发。
+                    bundle = await self._build_assets(
+                        record_date, github_items, arxiv_items, youtube_items, daily_summary
+                    )
+
                     email_sent = await email_service.send_digest_email(
                         digest_date=record_date,
                         github_items=github_items,
                         arxiv_items=arxiv_items,
                         youtube_items=youtube_items,
                         daily_summary=daily_summary,
-                        subject_suffix=subject_suffix
+                        subject_suffix=subject_suffix,
+                        attachments=bundle.attachments,
+                        copy_section_html=bundle.copy_section_html,
+                        copy_section_text=bundle.copy_section_text,
+                        withheld_html=bundle.withheld_html,
                     )
-                    
+
                     if email_sent:
                         digest_record.email_sent = True
                         digest_record.email_sent_at = datetime.now()
@@ -149,7 +168,7 @@ class DigestService:
                         logger.info("邮件发送成功")
                     else:
                         logger.warning("邮件发送失败")
-                        
+
                 except Exception as e:
                     logger.error(f"邮件发送异常: {e}")
             
@@ -192,6 +211,8 @@ class DigestService:
             return False, f"生成摘要失败: {str(e)}", None
             
         finally:
+            # 成功与失败都要报账：失败的运行同样花了钱，隐藏它会让成本无法归因
+            role_usage.log_summary()
             self.is_running = False
     
     async def generate_daily_digest(
@@ -220,6 +241,43 @@ class DigestService:
     ) -> Tuple[bool, str, Optional[DigestRecord]]:
         """生成每月摘要"""
         return await self.generate_digest("monthly", target_date, send_email, force)
+
+    async def _build_assets(
+        self,
+        record_date: date,
+        github_items: List[GitHubDigestItem],
+        arxiv_items: List[ArxivDigestItem],
+        youtube_items: List[YouTubeDigestItem],
+        daily_summary: Optional[str],
+    ) -> AssetBundle:
+        """产出长图、平台图与平台文案。任何失败都退化成"没有这部分"。
+
+        整体再包一层 try 是刻意的：build_assets 内部已经逐环节兜底，这一层挡的是
+        它自己的编程错误。三个外部系统之外还有我们自己的 bug，而一个 bug 也不
+        应该让今天的摘要邮件发不出去。
+        """
+        try:
+            digest_html = email_service._generate_html_template(  # noqa: SLF001 - 同包内模板
+                record_date,
+                github_items,
+                youtube_items,
+                arxiv_items=arxiv_items,
+                daily_summary=daily_summary,
+            )
+            items = [item.model_dump() for item in github_items] + [
+                item.model_dump() for item in arxiv_items
+            ]
+            digest_label = record_date.strftime("%Y-%m-%d")
+            bundle = await build_assets(
+                digest_html=digest_html, items=items, digest_label=digest_label
+            )
+            # 清理放在产出之后、发送之前，并以本次目录名为豁免条件：
+            # 先清理会有删掉正在写入的目录的风险。
+            cleanup_old_renders(digest_label)
+            return bundle
+        except Exception as exc:  # noqa: BLE001 - 资产失败绝不阻断邮件
+            logger.error(f"资产产出失败，本次邮件按现状发送: {exc}", exc_info=True)
+            return AssetBundle()
 
     async def _collect_source_data(
         self,

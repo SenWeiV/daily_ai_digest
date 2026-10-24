@@ -9,7 +9,7 @@ description: Exercise the digest through FastAPI and the React UI with isolated 
 
 ```bash
 DATABASE_PATH=/tmp/daily-ai-digest-verify.db \
-GITHUB_TOKEN=verify YOUTUBE_API_KEY=verify GEMINI_API_KEY= \
+GITHUB_TOKEN=verify YOUTUBE_API_KEY=verify TEXT_API_KEY= \
 CORS_ALLOW_ORIGINS=http://127.0.0.1:15173 \
 PYTHONPATH="$PWD/backend" .venv/bin/python .claude/skills/verify/mock_server.py
 ```

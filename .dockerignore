@@ -1,0 +1,31 @@
+# 不进镜像的东西。
+
+# 凭据。COPY backend/ ./backend/ 会把 backend/.env 一起烤进镜像层，
+# 那意味着：密钥被写进一个会被 docker save / docker push 带走的产物里，
+# 且镜像里那份陈旧的值会作为 dotenv 源参与解析 —— 一个已经轮换掉的旧 key
+# 就这样在容器里复活。运行时配置只从 compose 的 environment 来。
+.env
+.env.local
+backend/.env
+backend/.env.local
+
+# 平台相关的构建产物：把 macOS 的 venv 送进 Linux 镜像只会得到跑不起来的二进制
+backend/.venv/
+backend/venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+._*
+
+# 与运行无关，但会让每次构建的 context 变大、缓存失效
+.git/
+data/
+node_modules/
+frontend/dist/
+openspec/
+.claude/
+.comate/
+.DS_Store
+._*
+百度云服务器接入参数.md
