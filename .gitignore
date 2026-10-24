@@ -12,10 +12,13 @@ ENV/
 # Environment variables
 .env
 .env.local
+.env.bak*
+.env.*.bak
 
 # Database
 *.db
 data/*.db
+data/
 
 # IDE
 .idea/

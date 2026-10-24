@@ -12,6 +12,6 @@
 ## 3. Acceptance and rollout
 - [x] 3.1 Add isolated real-email acceptance and exact-message IMAP verification.
 - [x] 3.2 Pass backend regressions, frontend build, OpenSpec validation, and isolated API/UI verification.
-- [ ] 3.3 Back up and deploy; verify health and unchanged delivery schedule.
+- [x] 3.3 Back up and deploy; verify health and unchanged delivery schedule.
 - [x] 3.4 Send one real email to configured recipients and inspect the readable recipient mailbox.
-- [ ] 3.5 Push reviewed code, align server Git metadata, and record final evidence and any domain-dependent limitation.
+- [x] 3.5 Push reviewed code, align server Git metadata, and record final evidence and any domain-dependent limitation.
