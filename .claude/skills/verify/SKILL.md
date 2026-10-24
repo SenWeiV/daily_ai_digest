@@ -9,7 +9,7 @@ description: Exercise the digest through FastAPI and the React UI with isolated 
 
 ```bash
 DATABASE_PATH=/tmp/daily-ai-digest-verify.db \
-GITHUB_TOKEN=verify YOUTUBE_API_KEY=verify TEXT_API_KEY= \
+GITHUB_TOKEN=verify TEXT_API_KEY= \
 CORS_ALLOW_ORIGINS=http://127.0.0.1:15173 \
 PYTHONPATH="$PWD/backend" .venv/bin/python .claude/skills/verify/mock_server.py
 ```
@@ -24,7 +24,7 @@ curl http://127.0.0.1:18080/api/digest/today
 curl 'http://127.0.0.1:18080/api/digest/history?limit=10'
 ```
 
-3. Start the frontend and inspect the GitHub, arXiv, YouTube, and history views:
+3. Start the frontend and inspect the GitHub, arXiv, and history views:
 
 ```bash
 VITE_API_BASE_URL=http://127.0.0.1:18080/api \

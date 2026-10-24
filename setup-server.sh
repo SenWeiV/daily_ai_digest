@@ -132,17 +132,15 @@ PUBLISHERS_ENABLED=false
 # GitHub Token
 GITHUB_TOKEN=your_github_token_here
 
-# YouTube API（可选）
-YOUTUBE_API_KEY=
-
 # Gmail SMTP（用于发送邮件）
 GMAIL_SENDER=your_email@gmail.com
 GMAIL_APP_PASSWORD=your_app_password
 DIGEST_RECIPIENT=your_email@gmail.com
 
 # 定时任务配置
-SCHEDULE_HOUR=8
+SCHEDULE_HOUR=9
 SCHEDULE_MINUTE=0
+DIGEST_PREPARE_LEAD_MINUTES=30
 TIMEZONE=Asia/Shanghai
 
 # 应用配置

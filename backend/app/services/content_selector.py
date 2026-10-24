@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Iterable, TypeVar
 
+from app.content_profile import WORLD_MODEL_TOPIC
 from app.schemas import ArxivDigestItem, GitHubDigestItem
 
 
@@ -45,14 +46,24 @@ def _stable_key(item: ResearchItem) -> str:
     return f"arxiv:{item.arxiv_id.lower()}"
 
 
-def _rank_key(item: ResearchItem) -> tuple[int, int, float, int, int, int, int, datetime, str]:
+def _focus_rank(item: ResearchItem) -> int:
+    """重点关注方向（物理 AI 中的世界模型）在同一质量等级内排在前面。
+
+    排在等级之后而不是之前：重点方向的 B 级内容不应挤掉其他方向的 A 级内容。
+    """
+    return int(WORLD_MODEL_TOPIC in _item_topics(item))
+
+
+def _rank_key(item: ResearchItem) -> tuple[int, int, int, float, int, int, int, int, datetime, str]:
     grade_rank = {"A": 2, "B": 1, "C": 0}.get(_item_grade(item), 0)
+    focus_rank = _focus_rank(item)
     if isinstance(item, GitHubDigestItem):
         source_rank = int(item.source_channel == "trending")
         recent_comments = item.recent_issue_comments if item.recent_issue_comments is not None else -1
         activity = item.forks + item.watchers + item.open_issues
         return (
             grade_rank,
+            focus_rank,
             source_rank,
             item.recent_star_velocity,
             recent_comments,
@@ -64,6 +75,7 @@ def _rank_key(item: ResearchItem) -> tuple[int, int, float, int, int, int, int, 
         )
     return (
         grade_rank,
+        focus_rank,
         0,
         0.0,
         -1,

@@ -5,9 +5,8 @@ import uvicorn
 
 from app.agents.arxiv_agent import arxiv_agent
 from app.agents.github_agent import github_agent
-from app.agents.youtube_agent import youtube_agent
 from app.main import app
-from app.schemas import ArxivDigestItem, GitHubDigestItem, YouTubeDigestItem
+from app.schemas import ArxivDigestItem, GitHubDigestItem
 
 logger = logging.getLogger("runtime-verification")
 
@@ -85,27 +84,7 @@ async def fake_arxiv():
     ]
 
 
-async def fake_youtube():
-    logger.info("SOURCE_START youtube")
-    await asyncio.sleep(0.1)
-    return [
-        YouTubeDigestItem(
-            video_id="verify-video",
-            title="Existing YouTube digest behavior",
-            channel="Verification Channel",
-            video_url="https://youtube.com/watch?v=verify-video",
-            view_count=100,
-            like_count=10,
-            comment_count=1,
-            summary="The existing YouTube item remains present.",
-        )
-    ]
-
-
 github_agent.get_research_repos = fake_github
 arxiv_agent.fetch = fake_arxiv
-youtube_agent._disabled = False
-youtube_agent.client = object()
-youtube_agent.get_top_videos = fake_youtube
 
 uvicorn.run(app, host="127.0.0.1", port=18080, log_level="info")

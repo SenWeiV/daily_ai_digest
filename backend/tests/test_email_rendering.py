@@ -1,10 +1,10 @@
 from datetime import date
 
-from app.schemas import ArxivDigestItem, GitHubDigestItem, YouTubeDigestItem
+from app.schemas import ArxivDigestItem, GitHubDigestItem
 from app.services.email_service import EmailService
 
 
-def test_email_renders_arxiv_without_changing_youtube_section(monkeypatch):
+def test_email_renders_github_and_arxiv_without_youtube(monkeypatch):
     monkeypatch.setattr("app.services.email_service.settings.github_social_window_days", 14)
     service = EmailService()
     github = [
@@ -28,28 +28,14 @@ def test_email_renders_arxiv_without_changing_youtube_section(monkeypatch):
             quality_grade="A",
         )
     ]
-    youtube = [
-        YouTubeDigestItem(
-            video_id="video",
-            title="Existing YouTube item",
-            channel="channel",
-            video_url="https://youtube.com/watch?v=video",
-            view_count=1,
-            like_count=1,
-            comment_count=0,
-        )
-    ]
-
     html = service._generate_html_template(
         date(2026, 7, 15),
         github,
-        youtube,
         arxiv_items=arxiv,
     )
     text = service._generate_plain_text(
         date(2026, 7, 15),
         github,
-        youtube,
         arxiv_items=arxiv,
     )
 
@@ -57,11 +43,11 @@ def test_email_renders_arxiv_without_changing_youtube_section(monkeypatch):
     assert "A useful paper" in html
     assert "本周 +700" in html
     assert "近14天评论 12" in html
-    assert "Existing YouTube item" in html
+    assert "YouTube" not in html
     assert "arXiv 精选 1" in text
     assert "本周+700" in text
     assert "近14天评论 12" in text
-    assert "Existing YouTube item" in text
+    assert "YouTube" not in text
 
 
 def test_email_escapes_untrusted_arxiv_feed_fields():
@@ -75,7 +61,7 @@ def test_email_escapes_untrusted_arxiv_feed_fields():
         arxiv_url='https://arxiv.org/abs/2501.09999?x="bad"',
     )
 
-    html = service._generate_html_template(date(2026, 7, 15), [], [], arxiv_items=[paper])
+    html = service._generate_html_template(date(2026, 7, 15), [], arxiv_items=[paper])
 
     assert "<img src=x" not in html
     assert "<b>method</b>" not in html
@@ -95,7 +81,7 @@ def test_email_escapes_untrusted_github_fields():
         key_innovations=["Safer <tag>"],
     )
 
-    html = service._generate_html_template(date(2026, 7, 15), [repo], [])
+    html = service._generate_html_template(date(2026, 7, 15), [repo])
 
     assert "<img src=x" not in html
     assert "<script>" not in html

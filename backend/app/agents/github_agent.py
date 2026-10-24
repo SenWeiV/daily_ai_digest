@@ -53,6 +53,14 @@ class GitHubAgent:
         '"agent skill" framework',
         '"text-to-video" model',
         'comfyui workflow',
+        # 物理 AI 的重点：世界模型
+        '"world model" robot',
+        '"world model" video',
+        'topic:world-models',
+        # 决策模型（System One）：TypeSafe Jev 与各家同类模型
+        'topic:jev-alternative',
+        '"decision model" jev',
+        '"system one" model',
     )
     
     # Trending 网络异常类型

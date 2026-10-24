@@ -378,106 +378,10 @@ README内容：
             logger.warning("arXiv analysis failed [%s]: %s", title, exc)
             return {"summary": abstract[:800]}
 
-    async def analyze_youtube_video(
-        self,
-        title: str,
-        channel: str,
-        description: str,
-        view_count: int,
-        duration: str,
-        transcript: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        分析 YouTube 视频
-        
-        Args:
-            title: 视频标题
-            channel: 频道名称
-            description: 视频描述
-            view_count: 观看量
-            duration: 视频时长
-            transcript: 字幕/转录文本
-        
-        Returns:
-            分析结果字典
-        """
-        # 准备内容部分
-        content_section = ""
-        if transcript:
-            # 截断字幕内容
-            transcript_truncated = transcript[:15000] + "..." if len(transcript) > 15000 else transcript
-            content_section = f"\n\n完整字幕/转录：\n{transcript_truncated}"
-        else:
-            # 无字幕时使用描述
-            desc_truncated = description[:3000] if description else "无描述"
-            content_section = f"\n\n视频描述：\n{desc_truncated}\n\n（注意：此视频无字幕，请基于标题和描述进行分析）"
-        
-        prompt = f"""你是一位资深AI领域内容分析师。请深度分析以下YouTube视频内容，并以JSON格式返回分析结果。
-
-视频标题：{title}
-频道：{channel}
-观看量：{view_count:,}
-时长：{duration}
-{content_section}
-
-请从以下维度进行分析，以JSON格式返回（确保JSON格式正确）：
-
-```json
-{{
-    "content_summary": "视频核心内容总结（150字内）",
-    "key_points": ["核心观点1", "核心观点2", "核心观点3", "核心观点4", "核心观点5"],
-    "why_popular": "为什么这个视频受欢迎？（100字内）",
-    "practical_takeaways": "观看后的实用收获（100字内）",
-    "recommended_for": "适合什么样的观众（50字内）"
-}}
-```
-
-请确保返回的是有效的JSON格式。"""
-
-        try:
-            response = await self._generate_content(prompt)
-            result = self._parse_json_response(response)
-            raw_fallback = result.get("raw_response", "").strip()
-            
-            # 确保返回结构完整
-            return {
-                "content_summary": result.get("content_summary", "") or raw_fallback[:500],
-                "key_points": result.get("key_points", []),
-                "why_popular": result.get("why_popular", ""),
-                "practical_takeaways": result.get("practical_takeaways", ""),
-                "recommended_for": result.get("recommended_for", "")
-            }
-        except Exception as e:
-            logger.error(f"分析 YouTube 视频失败 [{title}]: {e}")
-            return {
-                "content_summary": f"分析失败: {str(e)}",
-                "key_points": [],
-                "why_popular": "",
-                "practical_takeaways": "",
-                "recommended_for": ""
-            }
-    
-    async def generate_daily_summary(
-        self,
-        github_items: List[Dict],
-        youtube_items: List[Dict]
-    ) -> str:
-        """
-        生成每日综合总结
-        
-        Args:
-            github_items: GitHub 项目列表
-            youtube_items: YouTube 视频列表
-        
-        Returns:
-            综合总结文本
-        """
-        return await self.generate_period_summary(github_items, youtube_items, period="daily")
-    
     async def generate_period_summary(
         self,
         github_items: List[Dict],
-        youtube_items: List[Dict],
+        arxiv_items: List[Dict],
         period: str = "daily"
     ) -> str:
         """
@@ -485,7 +389,7 @@ README内容：
         
         Args:
             github_items: GitHub 项目列表
-            youtube_items: YouTube 视频列表
+            arxiv_items: arXiv 论文列表
             period: 周期类型 (daily/weekly/monthly)
         
         Returns:
@@ -497,9 +401,9 @@ README内容：
             for item in github_items[:10]
         ])
         
-        youtube_summary = "\n".join([
-            f"- {item.get('title', 'Unknown')}: {item.get('content_summary', 'No summary')}"
-            for item in youtube_items[:10]
+        arxiv_summary = "\n".join([
+            f"- {item.get('title', 'Unknown')}: {item.get('summary', 'No summary')}"
+            for item in arxiv_items[:10]
         ])
         
         period_names = {
@@ -514,8 +418,8 @@ README内容：
 GitHub热门项目：
 {github_summary}
 
-YouTube热门视频：
-{youtube_summary}
+arXiv 精选论文：
+{arxiv_summary}
 
 请总结{period_name}AI领域的主要趋势、技术突破和值得关注的方向。"""
 
@@ -525,7 +429,7 @@ YouTube热门视频：
         except Exception as e:
             logger.error(f"生成{period}总结失败: {e}")
             period_desc = {"daily": "今日", "weekly": "本周", "monthly": "本月"}.get(period, "本周期")
-            return f"{period_desc}AI领域有多个值得关注的项目和视频，详情请查看下方内容。"
+            return f"{period_desc}AI领域有多个值得关注的项目和论文，详情请查看下方内容。"
 
 
 # 全局实例

@@ -1,7 +1,6 @@
 import {
   Github,
   FileText,
-  Youtube,
   Mail,
   Clock,
   CheckCircle,
@@ -47,14 +46,6 @@ function Dashboard({ status, digest, loading }: DashboardProps) {
       configured: true,
     },
     {
-      label: "YouTube 热门视频",
-      value: digest?.youtube_data?.length || 0,
-      icon: Youtube,
-      color: "text-red-300",
-      bgColor: "bg-red-400/10",
-      configured: status?.youtube_configured,
-    },
-    {
       label: "邮件状态",
       value: digest?.email_sent ? "已发送" : "未发送",
       icon: Mail,
@@ -63,7 +54,7 @@ function Dashboard({ status, digest, loading }: DashboardProps) {
       configured: status?.email_configured,
     },
     {
-      label: "下次执行",
+      label: "下次送达",
       value: status?.next_execution
         ? new Date(status.next_execution).toLocaleTimeString("zh-CN", {
             hour: "2-digit",

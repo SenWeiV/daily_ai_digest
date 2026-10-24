@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Send, CheckCircle, XCircle, AlertCircle, Youtube } from 'lucide-react'
-import { configApi, emailApi, systemApi, youtubeApi } from '../services/api'
-import type { AppConfig, SystemStatus, ExecutionLog, YouTubeDigestItem } from '../types'
+import { Send, CheckCircle, XCircle, AlertCircle } from 'lucide-react'
+import { configApi, emailApi, systemApi } from '../services/api'
+import type { AppConfig, SystemStatus, ExecutionLog } from '../types'
 
 function Settings() {
   const [config, setConfig] = useState<AppConfig | null>(null)
@@ -9,9 +9,6 @@ function Settings() {
   const [logs, setLogs] = useState<ExecutionLog[]>([])
   const [loading, setLoading] = useState(true)
   const [sendingTest, setSendingTest] = useState(false)
-  const [youtubeUrl, setYoutubeUrl] = useState('')
-  const [youtubeTesting, setYoutubeTesting] = useState(false)
-  const [youtubeResult, setYoutubeResult] = useState<YouTubeDigestItem | null>(null)
 
   // 加载数据
   useEffect(() => {
@@ -92,7 +89,7 @@ function Settings() {
       {/* API 配置状态 */}
       <div className="bg-white rounded-xl p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">API 配置状态</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           <div className="p-4 bg-gray-50 rounded-lg">
             <div className="flex items-center justify-between mb-2">
               <span className="font-medium text-gray-700">Gemini API</span>
@@ -111,14 +108,6 @@ function Settings() {
           
           <div className="p-4 bg-gray-50 rounded-lg">
             <div className="flex items-center justify-between mb-2">
-              <span className="font-medium text-gray-700">YouTube API</span>
-              <ConfigStatus configured={config?.youtube_configured || false} />
-            </div>
-            <p className="text-xs text-gray-500">用于获取YouTube热门视频</p>
-          </div>
-          
-          <div className="p-4 bg-gray-50 rounded-lg">
-            <div className="flex items-center justify-between mb-2">
               <span className="font-medium text-gray-700">Gmail SMTP</span>
               <ConfigStatus configured={config?.email_configured || false} />
             </div>
@@ -133,76 +122,20 @@ function Settings() {
         </div>
       </div>
 
-      {/* YouTube 单视频测试 */}
-      <div className="bg-white rounded-xl p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">YouTube 单视频测试</h2>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              YouTube 视频链接
-            </label>
-            <input
-              type="text"
-              value={youtubeUrl}
-              onChange={(e) => setYoutubeUrl(e.target.value)}
-              placeholder="https://www.youtube.com/watch?v=..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
-            />
-          </div>
-          <div>
-            <button
-              onClick={async () => {
-                if (!youtubeUrl.trim() || youtubeTesting) return
-                try {
-                  setYoutubeTesting(true)
-                  const data = await youtubeApi.analyze({ video_url: youtubeUrl.trim() })
-                  setYoutubeResult(data)
-                } catch (error) {
-                  console.error('YouTube 分析失败:', error)
-                  alert('YouTube 分析失败，请检查链接与 API 配置')
-                } finally {
-                  setYoutubeTesting(false)
-                }
-              }}
-              disabled={!youtubeUrl.trim() || youtubeTesting || !config?.youtube_configured || !config?.gemini_configured}
-              className="inline-flex items-center px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Youtube className={`w-4 h-4 mr-2 ${youtubeTesting ? 'animate-pulse' : ''}`} />
-              {youtubeTesting ? '分析中...' : '测试分析'}
-            </button>
-          </div>
-
-          {youtubeResult && (
-            <div className="mt-4 p-4 rounded-lg border border-gray-200 bg-gray-50 space-y-2">
-              <div className="text-sm text-gray-500">标题</div>
-              <div className="font-medium text-gray-900">{youtubeResult.title}</div>
-              <div className="text-sm text-gray-500 mt-2">总结</div>
-              <div className="text-sm text-gray-800">{youtubeResult.content_summary || '无'}</div>
-              <div className="text-sm text-gray-500 mt-2">关键要点</div>
-              <ul className="list-disc pl-5 text-sm text-gray-800">
-                {youtubeResult.key_points?.slice(0, 5).map((point, idx) => (
-                  <li key={idx}>{point}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* 调度配置 */}
       <div className="bg-white rounded-xl p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">调度配置</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              每日执行时间
+              日报送达时间
             </label>
             <div className="flex items-center space-x-2">
               <input
                 type="number"
                 min="0"
                 max="23"
-                value={config?.schedule_hour || 8}
+                value={config?.schedule_hour ?? 9}
                 className="w-20 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 readOnly
               />
@@ -316,7 +249,6 @@ function Settings() {
                   <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">执行时间</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">状态</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">GitHub</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">YouTube</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">耗时</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">错误信息</th>
                 </tr>
@@ -341,7 +273,6 @@ function Settings() {
                       )}
                     </td>
                     <td className="py-3 px-4 text-sm text-gray-600">{log.github_count}</td>
-                    <td className="py-3 px-4 text-sm text-gray-600">{log.youtube_count}</td>
                     <td className="py-3 px-4 text-sm text-gray-600">
                       {log.duration_seconds ? `${log.duration_seconds.toFixed(1)}s` : '-'}
                     </td>

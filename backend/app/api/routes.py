@@ -14,17 +14,15 @@ from app.schemas import (
     StatusResponse,
     TriggerRequest,
     TriggerResponse,
-    YouTubeAnalyzeRequest,
     DigestRecord,
     DigestRecordBrief,
     ExecutionLog,
     ConfigUpdate
 )
-from app.services.digest_service import digest_service
+from app.services.digest_service import default_target_date, digest_service
 from app.services.scheduler import scheduler_service
 from app.services.email_service import email_service
 from app.agents.github_agent import github_agent
-from app.agents.youtube_agent import youtube_agent
 from app.agents.gemini_analyzer import gemini_analyzer
 
 logger = logging.getLogger(__name__)
@@ -95,7 +93,7 @@ async def trigger_digest(
         return TriggerResponse(
             success=False,
             message="任务正在执行中，请稍后再试",
-            digest_date=date.today()
+            digest_date=default_target_date(request.digest_type)
         )
     
     # 验证 digest_type
@@ -103,7 +101,7 @@ async def trigger_digest(
         return TriggerResponse(
             success=False,
             message="digest_type 必须是 daily、weekly 或 monthly 之一",
-            digest_date=date.today()
+            digest_date=None
         )
     
     # 在后台执行
@@ -120,8 +118,8 @@ async def trigger_digest(
     return TriggerResponse(
         success=True,
         message=f"{type_label}摘要生成任务已启动，请稍后查看结果",
-        task_id=f"digest_{request.digest_type}_{date.today().isoformat()}",
-        digest_date=date.today()
+        task_id=f"digest_{request.digest_type}_{default_target_date(request.digest_type).isoformat()}",
+        digest_date=default_target_date(request.digest_type)
     )
 
 
@@ -153,7 +151,6 @@ async def get_system_status():
         database_connected=True,
         config_valid=True,
         github_configured=github_agent.is_available,
-        youtube_configured=youtube_agent.is_available,
         gemini_configured=gemini_analyzer.is_available,
         email_configured=email_service.is_configured
     )
@@ -194,7 +191,6 @@ async def get_config():
         "schedule_minute": settings.schedule_minute,
         "timezone": settings.timezone,
         "github_top_n": settings.github_top_n,
-        "youtube_top_n": settings.youtube_top_n,
         "ai_keywords": settings.ai_keywords,
         # 邮件配置（脱敏显示）
         "smtp_server": settings.smtp_server,
@@ -203,7 +199,6 @@ async def get_config():
         "email_recipient": _mask_email(email_recipient),
         # 服务状态
         "github_configured": bool(settings.github_token),
-        "youtube_configured": bool(settings.youtube_api_key),
         "gemini_configured": bool(settings.text_api_key),
         "email_configured": email_configured
     }
@@ -248,34 +243,6 @@ async def send_test_email(recipient: Optional[str] = None):
         return ApiResponse(success=True, message="测试邮件发送成功")
     else:
         raise HTTPException(status_code=500, detail="测试邮件发送失败")
-
-
-# =====================
-# YouTube 工具接口
-# =====================
-
-@router.post("/youtube/analyze")
-async def analyze_youtube_video(request: YouTubeAnalyzeRequest):
-    """分析指定YouTube视频（URL/ID）"""
-    if not youtube_agent.is_available:
-        raise HTTPException(status_code=400, detail="YouTube API 未配置")
-
-    if not gemini_analyzer.is_available:
-        raise HTTPException(status_code=400, detail="Gemini API 未配置或网络不可达")
-
-    try:
-        result = await youtube_agent.analyze_video_by_id(
-            video_url=request.video_url,
-            video_id=request.video_id
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-    except Exception as e:
-        logger.error(f"YouTube 单视频分析失败: {e}")
-        raise HTTPException(status_code=500, detail="YouTube 视频分析失败")
 
 
 # =====================

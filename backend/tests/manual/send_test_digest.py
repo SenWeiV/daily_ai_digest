@@ -83,9 +83,8 @@ async def main() -> int:
 
     github_items = record.github_data or []
     arxiv_items = record.arxiv_data or []
-    youtube_items = record.youtube_data or []
     print(f"读到 {target} 的摘要：GitHub {len(github_items)} 条 / "
-          f"arXiv {len(arxiv_items)} 条 / YouTube {len(youtube_items)} 条")
+          f"arXiv {len(arxiv_items)} 条")
     print(f"渲染={settings.render_enabled} 质检={settings.visual_qa_enabled} "
           f"生图={settings.image_gen_enabled}")
     print(f"附件预算={settings.attachment_budget_bytes / 1048576:.1f}MB "
@@ -96,21 +95,21 @@ async def main() -> int:
         return 1
 
     summary = None
-    if github_items or youtube_items:
+    if github_items or arxiv_items:
         from app.agents.gemini_analyzer import gemini_analyzer
         if gemini_analyzer.is_available:
             try:
                 summary = await gemini_analyzer.generate_period_summary(
                     [i.model_dump() for i in github_items],
-                    [i.model_dump() for i in youtube_items],
-                    period="今日",
+                    [i.model_dump() for i in arxiv_items],
+                    period="daily",
                 )
                 print(f"总结已生成（{len(summary or '')} 字）")
             except Exception as exc:  # noqa: BLE001
                 print(f"! 总结生成失败，邮件照发：{exc}")
 
     bundle = await digest_service._build_assets(  # noqa: SLF001
-        target, github_items, arxiv_items, youtube_items, summary
+        target, github_items, arxiv_items, summary
     )
     total = sum(len(a.content) for a in bundle.attachments)
     print(f"附件 {len(bundle.attachments)} 个"
@@ -153,7 +152,6 @@ async def main() -> int:
         digest_date=target,
         github_items=github_items,
         arxiv_items=arxiv_items,
-        youtube_items=youtube_items,
         daily_summary=summary,
         subject_suffix=f"每日（临时测试 {datetime.now().strftime('%Y%m%d-%H%M%S')}）",
         attachments=bundle.attachments,

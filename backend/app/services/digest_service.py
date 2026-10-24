@@ -1,26 +1,41 @@
 """
-摘要生成服务 - 整合GitHub和YouTube Agent生成每日/每周/每月摘要
+摘要生成服务 - 整合 GitHub 与 arXiv 生成每日/每周/每月摘要
 """
 
 import asyncio
 import logging
 from datetime import datetime, date, timedelta
 from typing import Optional, Tuple, List, Literal
+from zoneinfo import ZoneInfo
 
 from app.config import settings
 from app.database import get_db
 from app.model_roles import role_usage
-from app.schemas import DigestRecord, GitHubDigestItem, ArxivDigestItem, YouTubeDigestItem, ExecutionLog
+from app.schemas import DigestRecord, GitHubDigestItem, ArxivDigestItem, ExecutionLog
 from app.models import DigestRecordModel, ExecutionLogModel
 from app.agents.github_agent import github_agent
 from app.agents.arxiv_agent import arxiv_agent
-from app.agents.youtube_agent import youtube_agent
 from app.agents.gemini_analyzer import gemini_analyzer
 from app.services.email_service import email_service
 from app.services.content_selector import select_research_items
 from app.services.digest_assets import AssetBundle, build_assets, cleanup_old_renders
 
 logger = logging.getLogger(__name__)
+
+
+def local_today() -> date:
+    """按业务时区取"今天"。容器跑在 UTC，北京时间早上 8 点前的 date.today() 还是前一天。"""
+    return datetime.now(ZoneInfo(settings.timezone)).date()
+
+
+def default_target_date(digest_type: str, today: Optional[date] = None) -> date:
+    """日报整理前一天的内容；周报、月报仍以当天所在的周/月为准。
+
+    日报早上发出，读者要的是"昨天发生了什么"。记录日期必须跟着内容走，
+    否则早上 9 点的邮件标着今天的日期，而今天几乎还没有内容。
+    """
+    today = today or local_today()
+    return today - timedelta(days=1) if digest_type == "daily" else today
 
 
 class DigestService:
@@ -36,16 +51,19 @@ class DigestService:
         digest_type: Literal["daily", "weekly", "monthly"] = "daily",
         target_date: Optional[date] = None,
         send_email: bool = True,
-        force: bool = False
+        force: bool = False,
+        send_at: Optional[datetime] = None,
     ) -> Tuple[bool, str, Optional[DigestRecord]]:
         """
         生成摘要（支持每日、每周、每月）
         
         Args:
             digest_type: 摘要类型 - daily(每日), weekly(每周), monthly(每月)
-            target_date: 目标日期（默认今天）
+            target_date: 目标日期（日报默认昨天，周报/月报默认今天）
             send_email: 是否发送邮件
             force: 是否强制重新生成
+            send_at: 最早发送时间。提前开始整理，整理完等到这个时刻再发，
+                保证邮件准点到达；为空则整理完立即发送
         
         Returns:
             (是否成功, 消息, 摘要记录)
@@ -55,7 +73,7 @@ class DigestService:
         
         self.is_running = True
         start_time = datetime.now()
-        target_date = target_date or date.today()
+        target_date = target_date or default_target_date(digest_type)
         
         # 根据类型确定记录日期
         if digest_type == "weekly":
@@ -69,7 +87,6 @@ class DigestService:
             execution_time=start_time,
             status="running",
             github_count=0,
-            youtube_count=0
         )
         
         try:
@@ -85,8 +102,7 @@ class DigestService:
                     self.is_running = False
                     return True, f"{digest_type}摘要已存在", existing
             
-            # Source collection remains independent; YouTube is not part of research selection.
-            github_items, arxiv_items, youtube_items = await self._collect_source_data(digest_type)
+            github_items, arxiv_items = await self._collect_source_data(digest_type)
             github_items, arxiv_items = select_research_items(
                 github_items,
                 arxiv_items,
@@ -100,13 +116,12 @@ class DigestService:
             
             # 生成总结
             daily_summary = None
-            if gemini_analyzer.is_available and (github_items or youtube_items):
+            if gemini_analyzer.is_available and (github_items or arxiv_items):
                 try:
-                    period_text = {"daily": "今日", "weekly": "本周", "monthly": "本月"}[digest_type]
                     daily_summary = await gemini_analyzer.generate_period_summary(
                         [item.model_dump() for item in github_items],
-                        [item.model_dump() for item in youtube_items],
-                        period=period_text
+                        [item.model_dump() for item in arxiv_items],
+                        period=digest_type
                     )
                 except Exception as e:
                     logger.error(f"生成总结失败: {e}")
@@ -117,7 +132,6 @@ class DigestService:
                 digest_type=digest_type,
                 github_data=github_items,
                 arxiv_data=arxiv_items,
-                youtube_data=youtube_items,
                 email_sent=False
             )
             
@@ -144,14 +158,15 @@ class DigestService:
                     # 资产先于发送：一封邮件带走正文、文案和全部通过质检的图，
                     # 不拆信、不为迟到的资产补发第二封。宁可等，不能早发。
                     bundle = await self._build_assets(
-                        record_date, github_items, arxiv_items, youtube_items, daily_summary
+                        record_date, github_items, arxiv_items, daily_summary
                     )
+
+                    await self._wait_until(send_at)
 
                     email_sent = await email_service.send_digest_email(
                         digest_date=record_date,
                         github_items=github_items,
                         arxiv_items=arxiv_items,
-                        youtube_items=youtube_items,
                         daily_summary=daily_summary,
                         subject_suffix=subject_suffix,
                         attachments=bundle.attachments,
@@ -176,7 +191,6 @@ class DigestService:
             duration = (datetime.now() - start_time).total_seconds()
             execution_log.status = "success"
             execution_log.github_count = len(github_items)
-            execution_log.youtube_count = len(youtube_items)
             execution_log.duration_seconds = duration
             execution_log.digest_type = digest_type
             
@@ -188,7 +202,7 @@ class DigestService:
             
             message = (
                 f"[{digest_type}] 摘要生成完成: GitHub {len(github_items)} 个, "
-                f"arXiv {len(arxiv_items)} 个, YouTube {len(youtube_items)} 个"
+                f"arXiv {len(arxiv_items)} 个"
             )
             if email_sent:
                 message += ", 邮件已发送"
@@ -247,7 +261,6 @@ class DigestService:
         record_date: date,
         github_items: List[GitHubDigestItem],
         arxiv_items: List[ArxivDigestItem],
-        youtube_items: List[YouTubeDigestItem],
         daily_summary: Optional[str],
     ) -> AssetBundle:
         """产出长图、平台图与平台文案。任何失败都退化成"没有这部分"。
@@ -260,7 +273,6 @@ class DigestService:
             digest_html = email_service._generate_html_template(  # noqa: SLF001 - 同包内模板
                 record_date,
                 github_items,
-                youtube_items,
                 arxiv_items=arxiv_items,
                 daily_summary=daily_summary,
             )
@@ -282,14 +294,27 @@ class DigestService:
     async def _collect_source_data(
         self,
         digest_type: Literal["daily", "weekly", "monthly"],
-    ) -> tuple[List[GitHubDigestItem], List[ArxivDigestItem], List[YouTubeDigestItem]]:
+    ) -> tuple[List[GitHubDigestItem], List[ArxivDigestItem]]:
         """Collect all independent sources concurrently; selection happens afterwards."""
-        github_items, arxiv_items, youtube_items = await asyncio.gather(
+        github_items, arxiv_items = await asyncio.gather(
             self._fetch_github_data(digest_type),
             self._fetch_arxiv_data(),
-            self._fetch_youtube_data(),
         )
-        return github_items, arxiv_items, youtube_items
+        return github_items, arxiv_items
+
+    @staticmethod
+    async def _wait_until(send_at: Optional[datetime]) -> None:
+        """整理得比计划快时，等到约定时刻再发；已经过点就立即发。
+
+        只等不跳过：整理超时晚于约定时刻时，晚到的邮件仍然比没有邮件好。
+        """
+        if send_at is None:
+            return
+        now = datetime.now(send_at.tzinfo) if send_at.tzinfo else datetime.now()
+        delay = (send_at - now).total_seconds()
+        if delay > 0:
+            logger.info(f"摘要已就绪，等待 {delay:.0f} 秒到 {send_at:%H:%M} 再发送")
+            await asyncio.sleep(delay)
 
     async def _fetch_github_data(
         self,
@@ -352,22 +377,14 @@ class DigestService:
                     setattr(item, field, value)
         return items
 
-    async def _fetch_youtube_data(self) -> List[YouTubeDigestItem]:
-        """获取YouTube数据"""
-        if not youtube_agent.is_available:
-            logger.warning("YouTube Agent 不可用")
-            return []
-        
-        try:
-            return await youtube_agent.get_top_videos()
-        except Exception as e:
-            logger.error(f"获取YouTube数据失败: {e}")
-            raise
-    
     async def get_today_digest(self) -> Optional[DigestRecord]:
-        """获取今日摘要"""
+        """获取最新一期日报。日报记在前一天名下，所以今天没有记录时退回昨天。"""
         async with get_db() as db:
-            return await DigestRecordModel.get_by_date_and_type(db, date.today(), "daily")
+            for day in (local_today(), default_target_date("daily")):
+                record = await DigestRecordModel.get_by_date_and_type(db, day, "daily")
+                if record:
+                    return record
+            return None
     
     async def get_digest_by_date(self, target_date: date, digest_type: str = "daily") -> Optional[DigestRecord]:
         """获取指定日期和类型的摘要"""

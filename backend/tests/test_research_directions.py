@@ -268,3 +268,65 @@ def test_multi_topic_item_does_not_outrank_on_topic_count_alone():
 def test_added_profile_candidate_with_no_evidence_is_graded_c():
     assert quality_grade(relevant=True, evidence=set(), source="github") == "C"
     assert quality_grade(relevant=False, evidence={"implementation"}, source="github") == "C"
+
+
+# --- 决策模型（System One）方向 ---------------------------------------------
+
+def test_jev_alternative_repo_matches_decision_model():
+    text = (
+        "OpenJev — an open-weight System One decision model. Returns typed choices, "
+        "scores and probabilities in a single pass for routing and classification."
+    )
+    assert "decision-model" in matching_profiles(text)
+
+
+def test_decision_model_paper_matches_without_brand_names():
+    text = (
+        "We train a non-generative decision model that answers structured decision "
+        "queries with calibrated confidence, and evaluate latency against an LLM baseline."
+    )
+    assert "decision-model" in matching_profiles(text)
+
+
+def test_type_safe_library_is_not_a_decision_model():
+    text = (
+        "A typesafe ORM for TypeScript with a schema-first api and zero-cost "
+        "inference of query result types."
+    )
+    assert "decision-model" not in matching_profiles(text)
+
+
+# --- 物理 AI 重点：世界模型 -------------------------------------------------
+
+def test_world_model_gets_its_focus_tag_inside_physical_ai():
+    text = (
+        "An action-conditioned video world model for robot planning, released with "
+        "a robot dataset and an evaluation benchmark."
+    )
+    matches = matching_profiles(text)
+    assert "physical-ai" in matches
+    assert "world-model" in matches
+
+
+def test_plain_robot_learning_has_no_world_model_tag():
+    matches = matching_profiles(text := "Robot learning with a diffusion policy and a released robot dataset.")
+    assert "physical-ai" in matches, text
+    assert "world-model" not in matches
+
+
+def test_world_model_ranks_first_within_the_same_grade():
+    others = [_repo(i, ("agentic",), stars=10_000 - i) for i in range(5)]
+    world = _repo(50, ("physical-ai", "world-model"), stars=1)
+
+    github_selected, _ = select_research_items(others + [world], [], target_items=10, max_items=24)
+
+    assert github_selected[0].repo_name == world.repo_name
+
+
+def test_world_model_focus_never_outranks_a_better_grade():
+    from app.services.content_selector import _rank_key
+
+    world_b = _repo(1, ("physical-ai", "world-model"))
+    world_b.quality_grade = "B"
+    agent_a = _repo(2, ("agentic",))
+    assert _rank_key(agent_a) > _rank_key(world_b)

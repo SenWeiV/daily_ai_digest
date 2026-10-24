@@ -76,9 +76,6 @@ class Settings(BaseSettings):
     github_proxy: str = Field(default="", alias="GITHUB_PROXY", description="代理地址，如 http://127.0.0.1:7890")
     github_mirror: str = Field(default="", alias="GITHUB_MIRROR", description="镜像地址，如 https://ghproxy.com")
     
-    # YouTube API
-    youtube_api_key: SecretStr = Field(default=SecretStr(""), alias="YOUTUBE_API_KEY")
-    
     # 邮件服务配置（支持 Gmail / 163 / QQ 等）
     smtp_server: str = Field(default="smtp.163.com", alias="SMTP_SERVER")
     smtp_port: int = Field(default=465, alias="SMTP_PORT")
@@ -95,8 +92,11 @@ class Settings(BaseSettings):
     digest_recipient: str = Field(default="", alias="DIGEST_RECIPIENT")
     
     # 定时任务配置
-    schedule_hour: int = Field(default=8, alias="SCHEDULE_HOUR")
+    # 日报的**送达**时间。整理要 5–15 分钟，所以提前 DIGEST_PREPARE_LEAD_MINUTES
+    # 开始，整理完等到这个时刻再发，邮件准点到达而不是"9 点开始、9 点十几分到"。
+    schedule_hour: int = Field(default=9, alias="SCHEDULE_HOUR")
     schedule_minute: int = Field(default=0, alias="SCHEDULE_MINUTE")
+    digest_prepare_lead_minutes: int = Field(default=30, alias="DIGEST_PREPARE_LEAD_MINUTES")
     timezone: str = Field(default="Asia/Shanghai", alias="TIMEZONE")
     
     # 应用配置
@@ -114,7 +114,6 @@ class Settings(BaseSettings):
     
     # 搜索配置
     github_top_n: int = Field(default=10, alias="GITHUB_TOP_N", description="GitHub Trending基础数量")
-    youtube_top_n: int = Field(default=10, alias="YOUTUBE_TOP_N", description="YouTube Top N 数量")
     github_candidate_limit: int = Field(default=24, alias="GITHUB_CANDIDATE_LIMIT")
     github_active_project_days: int = Field(default=14, alias="GITHUB_ACTIVE_PROJECT_DAYS")
     github_search_queries: str = Field(default="", alias="GITHUB_SEARCH_QUERIES")

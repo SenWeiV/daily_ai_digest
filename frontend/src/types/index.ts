@@ -55,27 +55,6 @@ export interface ArxivDigestItem {
   limitations: string | null;
 }
 
-// YouTube 摘要项
-export interface YouTubeDigestItem {
-  video_id: string;
-  title: string;
-  channel: string;
-  channel_url: string | null;
-  video_url: string;
-  thumbnail_url: string | null;
-  view_count: number;
-  like_count: number;
-  comment_count: number;
-  published_at: string | null;
-  duration: string | null;
-  // Gemini 分析结果
-  content_summary: string | null;
-  key_points: string[];
-  why_popular: string | null;
-  practical_takeaways: string | null;
-  recommended_for: string | null;
-}
-
 // 摘要记录
 export interface DigestRecord {
   id: number | null;
@@ -83,7 +62,6 @@ export interface DigestRecord {
   digest_type: string; // daily/weekly/monthly
   github_data: GitHubDigestItem[];
   arxiv_data: ArxivDigestItem[];
-  youtube_data: YouTubeDigestItem[];
   email_sent: boolean;
   email_sent_at: string | null;
   created_at: string | null;
@@ -96,7 +74,6 @@ export interface DigestRecordBrief {
   digest_date: string;
   github_count: number;
   arxiv_count: number;
-  youtube_count: number;
   email_sent: boolean;
   created_at: string | null;
 }
@@ -107,7 +84,6 @@ export interface ExecutionLog {
   execution_time: string;
   status: 'success' | 'failed' | 'running';
   github_count: number;
-  youtube_count: number;
   error_message: string | null;
   duration_seconds: number | null;
   created_at: string | null;
@@ -122,7 +98,6 @@ export interface SystemStatus {
   database_connected: boolean;
   config_valid: boolean;
   github_configured: boolean;
-  youtube_configured: boolean;
   gemini_configured: boolean;
   email_configured: boolean;
 }
@@ -133,12 +108,10 @@ export interface AppConfig {
   schedule_minute: number;
   timezone: string;
   github_top_n: number;
-  youtube_top_n: number;
   ai_keywords: string[];
   gmail_sender: string;
   digest_recipient: string;
   github_configured: boolean;
-  youtube_configured: boolean;
   gemini_configured: boolean;
   email_configured: boolean;
 }
@@ -163,12 +136,6 @@ export interface TriggerResponse {
   message: string;
   task_id: string | null;
   digest_date: string | null;
-}
-
-// YouTube 单视频分析请求
-export interface YouTubeAnalyzeRequest {
-  video_url?: string;
-  video_id?: string;
 }
 
 // 历史列表响应

@@ -3,6 +3,7 @@
 """
 
 import logging
+import re
 import ssl
 from html import escape
 from email.mime.text import MIMEText
@@ -14,7 +15,7 @@ import aiosmtplib
 from email.mime.image import MIMEImage
 
 from app.config import secret_value, settings
-from app.schemas import GitHubDigestItem, ArxivDigestItem, YouTubeDigestItem
+from app.schemas import GitHubDigestItem, ArxivDigestItem
 from app.services.attachment_budget import Attachment
 from app.utils.helpers import format_number
 
@@ -29,6 +30,20 @@ _IMAGE_SUBTYPES = {"png": "png", "jpg": "jpeg", "jpeg": "jpeg", "webp": "webp", 
 def _image_subtype(filename: str) -> str:
     suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     return _IMAGE_SUBTYPES.get(suffix, "png")
+
+
+def parse_recipients(value: str) -> List[str]:
+    """把 EMAIL_RECIPIENT 拆成地址列表，逗号或分号分隔。
+
+    必须拆开再交给 sendmail：整串 "a@x.com,b@y.com" 会被当成一个地址，
+    服务商直接拒收，两个人都收不到。
+    """
+    recipients: List[str] = []
+    for part in re.split(r"[,;]", value or ""):
+        address = part.strip()
+        if address and address not in recipients:
+            recipients.append(address)
+    return recipients
 
 
 class EmailService:
@@ -60,7 +75,6 @@ class EmailService:
         self,
         digest_date: date,
         github_items: List[GitHubDigestItem],
-        youtube_items: List[YouTubeDigestItem],
         arxiv_items: Optional[List[ArxivDigestItem]] = None,
         daily_summary: Optional[str] = None,
         copy_section_html: str = "",
@@ -134,34 +148,6 @@ class EmailService:
             </div>
             """
 
-        # YouTube 视频列表
-        youtube_html = ""
-        for i, item in enumerate(youtube_items, 1):
-            key_points = "".join([f"<li>{p}</li>" for p in item.key_points[:5]]) if item.key_points else ""
-            youtube_html += f"""
-            <div style="background: #f8f9fa; border-radius: 8px; padding: 16px; margin-bottom: 16px; border-left: 4px solid #ff0000;">
-                <h3 style="margin: 0 0 8px 0; color: #24292f;">
-                    {i}. <a href="{item.video_url}" style="color: #0969da; text-decoration: none;">{item.title}</a>
-                </h3>
-                <p style="color: #57606a; margin: 0 0 8px 0; font-size: 14px;">
-                    📺 {item.channel} • 👀 {format_number(item.view_count)} 观看 • ⏱️ {item.duration}
-                </p>
-                <div style="margin: 12px 0;">
-                    <strong style="color: #24292f;">📝 内容总结:</strong>
-                    <p style="margin: 4px 0; color: #24292f;">{item.content_summary or '暂无总结'}</p>
-                </div>
-                {f'<div style="margin: 12px 0;"><strong style="color: #24292f;">🎯 核心观点:</strong><ul style="margin: 4px 0; padding-left: 20px; color: #24292f;">{key_points}</ul></div>' if key_points else ''}
-                <div style="margin: 12px 0;">
-                    <strong style="color: #24292f;">🔥 为什么受欢迎:</strong>
-                    <p style="margin: 4px 0; color: #24292f;">{item.why_popular or '暂无分析'}</p>
-                </div>
-                <div style="margin: 12px 0;">
-                    <strong style="color: #24292f;">💡 实用收获:</strong>
-                    <p style="margin: 4px 0; color: #24292f;">{item.practical_takeaways or '暂无'}</p>
-                </div>
-            </div>
-            """
-        
         # 完整HTML模板
         html = f"""
 <!DOCTYPE html>
@@ -189,10 +175,6 @@ class EmailService:
             <div style="font-size: 32px; font-weight: bold; color: #8250df;">📄 {len(arxiv_items)}</div>
             <div style="color: #57606a;">arXiv 论文</div>
         </div>
-        <div>
-            <div style="font-size: 32px; font-weight: bold; color: #ff0000;">📺 {len(youtube_items)}</div>
-            <div style="color: #57606a;">YouTube 热门视频</div>
-        </div>
     </div>
     
     {f'''
@@ -217,14 +199,6 @@ class EmailService:
         {arxiv_html if arxiv_html else '<p style="color: #57606a;">暂无数据</p>'}
     </div>
 
-    <!-- YouTube Top 10 -->
-    <div style="margin: 32px 0;">
-        <h2 style="color: #24292f; border-bottom: 2px solid #ff0000; padding-bottom: 8px; display: flex; align-items: center;">
-            <span style="font-size: 24px; margin-right: 8px;">📺</span> YouTube Top {len(youtube_items)}
-        </h2>
-        {youtube_html if youtube_html else '<p style="color: #57606a;">暂无数据</p>'}
-    </div>
-
     {withheld_html}
 
     {copy_section_html}
@@ -244,7 +218,6 @@ class EmailService:
         self,
         digest_date: date,
         github_items: List[GitHubDigestItem],
-        youtube_items: List[YouTubeDigestItem],
         arxiv_items: Optional[List[ArxivDigestItem]] = None,
         daily_summary: Optional[str] = None
     ) -> str:
@@ -256,7 +229,7 @@ class EmailService:
             f"🤖 Daily AI Digest - {digest_date.strftime('%Y年%m月%d日')}",
             "=" * 60,
             "",
-            f"📊 今日概览: GitHub {len(github_items)} 个 | arXiv {len(arxiv_items)} 篇 | YouTube {len(youtube_items)} 个",
+            f"📊 今日概览: GitHub {len(github_items)} 个 | arXiv {len(arxiv_items)} 篇",
             "",
         ]
         
@@ -308,23 +281,6 @@ class EmailService:
                 "",
             ])
 
-        # YouTube
-        lines.extend([
-            "-" * 60,
-            f"📺 YouTube Top {len(youtube_items)}",
-            "-" * 60,
-            "",
-        ])
-        
-        for i, item in enumerate(youtube_items, 1):
-            lines.extend([
-                f"{i}. {item.title}",
-                f"   频道: {item.channel} | 观看: {format_number(item.view_count)}",
-                f"   链接: {item.video_url}",
-                f"   总结: {item.content_summary or '暂无'}",
-                "",
-            ])
-        
         lines.extend([
             "=" * 60,
             "由 Daily AI Digest 自动生成",
@@ -337,7 +293,6 @@ class EmailService:
         self,
         digest_date: date,
         github_items: List[GitHubDigestItem],
-        youtube_items: List[YouTubeDigestItem],
         arxiv_items: Optional[List[ArxivDigestItem]] = None,
         daily_summary: Optional[str] = None,
         recipient: Optional[str] = None,
@@ -353,9 +308,9 @@ class EmailService:
         Args:
             digest_date: 摘要日期
             github_items: GitHub项目列表
-            youtube_items: YouTube视频列表
+            arxiv_items: arXiv 论文列表
             daily_summary: 每日总结
-            recipient: 收件人（可选，默认使用配置）
+            recipient: 收件人（可选，默认使用配置；多个地址用逗号分隔）
             subject_suffix: 邮件主题后缀 (Daily/Weekly/Monthly)
             attachments: 已通过质检的图片附件
             copy_section_html: 各平台文案区块（HTML）
@@ -369,7 +324,10 @@ class EmailService:
             logger.error("邮件服务未配置完整，无法发送")
             return False
 
-        recipient = recipient or self.recipient_email
+        recipients = parse_recipients(recipient or self.recipient_email)
+        if not recipients:
+            logger.error("收件人为空，无法发送")
+            return False
         attachments = attachments or []
 
         try:
@@ -379,15 +337,14 @@ class EmailService:
             msg = MIMEMultipart("mixed")
             body = MIMEMultipart("alternative")
             arxiv_items = arxiv_items or []
-            msg["Subject"] = f"🤖 {subject_suffix} AI Digest - {digest_date.strftime('%Y-%m-%d')} | GitHub {len(github_items)} + arXiv {len(arxiv_items)} + YouTube {len(youtube_items)}"
+            msg["Subject"] = f"🤖 {subject_suffix} AI Digest - {digest_date.strftime('%Y-%m-%d')} | GitHub {len(github_items)} + arXiv {len(arxiv_items)}"
             msg["From"] = self.sender_email
-            msg["To"] = recipient
+            msg["To"] = ", ".join(recipients)
 
             # 纯文本版本
             text_content = self._generate_plain_text(
                 digest_date,
                 github_items,
-                youtube_items,
                 arxiv_items=arxiv_items,
                 daily_summary=daily_summary,
             )
@@ -399,7 +356,6 @@ class EmailService:
             html_content = self._generate_html_template(
                 digest_date,
                 github_items,
-                youtube_items,
                 arxiv_items=arxiv_items,
                 daily_summary=daily_summary,
                 copy_section_html=copy_section_html,
@@ -453,7 +409,7 @@ class EmailService:
                     timeout=timeout,
                 ) as server:
                     await server.login(self.sender_email, self.app_password)
-                    await server.sendmail(self.sender_email, recipient, msg.as_string())
+                    await server.sendmail(self.sender_email, recipients, msg.as_string())
             else:
                 # STARTTLS（Gmail 使用端口 587）
                 async with aiosmtplib.SMTP(
@@ -464,9 +420,9 @@ class EmailService:
                 ) as server:
                     await server.starttls(context=context)
                     await server.login(self.sender_email, self.app_password)
-                    await server.sendmail(self.sender_email, recipient, msg.as_string())
+                    await server.sendmail(self.sender_email, recipients, msg.as_string())
             
-            logger.info(f"邮件发送成功: {recipient}")
+            logger.info(f"邮件发送成功: {', '.join(recipients)}")
             return True
             
         except aiosmtplib.errors.SMTPAuthenticationError as e:
@@ -493,13 +449,16 @@ class EmailService:
             logger.error("邮件服务未配置完整")
             return False
         
-        recipient = recipient or self.recipient_email
+        recipients = parse_recipients(recipient or self.recipient_email)
+        if not recipients:
+            logger.error("收件人为空，无法发送")
+            return False
         
         try:
             msg = MIMEMultipart()
             msg["Subject"] = "🤖 Daily AI Digest - 测试邮件"
             msg["From"] = self.sender_email
-            msg["To"] = recipient
+            msg["To"] = ", ".join(recipients)
             
             body = """
             <html>
@@ -526,7 +485,7 @@ class EmailService:
                     timeout=timeout,
                 ) as server:
                     await server.login(self.sender_email, self.app_password)
-                    await server.sendmail(self.sender_email, recipient, msg.as_string())
+                    await server.sendmail(self.sender_email, recipients, msg.as_string())
             else:
                 # STARTTLS（Gmail 使用端口 587）
                 async with aiosmtplib.SMTP(
@@ -537,9 +496,9 @@ class EmailService:
                 ) as server:
                     await server.starttls(context=context)
                     await server.login(self.sender_email, self.app_password)
-                    await server.sendmail(self.sender_email, recipient, msg.as_string())
+                    await server.sendmail(self.sender_email, recipients, msg.as_string())
 
-            logger.info(f"测试邮件发送成功: {recipient}")
+            logger.info(f"测试邮件发送成功: {', '.join(recipients)}")
             return True
             
         except Exception as e:

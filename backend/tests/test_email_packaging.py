@@ -17,7 +17,7 @@ from app.publishers.email_sections import (
     render_withheld_html,
 )
 from app.publishers.validation import CopyDraft, CopyIssue
-from app.schemas import ArxivDigestItem, GitHubDigestItem, YouTubeDigestItem
+from app.schemas import ArxivDigestItem, GitHubDigestItem
 from app.services.attachment_budget import (
     LONG_IMAGE_SLUG,
     PLATFORM_DROP_ORDER,
@@ -41,14 +41,6 @@ def _arxiv():
             title="Paper",
             abstract="abs",
             arxiv_url="https://arxiv.org/abs/2501.00001",
-        )
-    ]
-
-
-def _youtube():
-    return [
-        YouTubeDigestItem(
-            video_id="v", title="Video", channel="c", video_url="https://youtube.com/watch?v=v"
         )
     ]
 
@@ -82,7 +74,7 @@ def _send(service, **kwargs):
 # --- MIME 结构 ------------------------------------------------------------
 
 
-def _build_message(attachments=None, copy_html="", copy_text="", withheld_html=""):
+def _build_message(attachments=None, copy_html="", copy_text="", withheld_html="", recipient=None):
     """复用 send_digest_email 的构造逻辑，但不发送。"""
     service = _CapturingService()
     sent = {}
@@ -107,6 +99,7 @@ def _build_message(attachments=None, copy_html="", copy_text="", withheld_html="
 
         async def sendmail(self, sender, recipient, raw):
             sent["raw"] = raw
+            sent["recipients"] = recipient
             sent["count"] = sent.get("count", 0) + 1
 
     original = aiosmtplib.SMTP
@@ -116,13 +109,13 @@ def _build_message(attachments=None, copy_html="", copy_text="", withheld_html="
             service.send_digest_email(
                 date(2026, 8, 1),
                 _github(),
-                _youtube(),
                 arxiv_items=_arxiv(),
                 daily_summary="今日概览",
                 attachments=attachments,
                 copy_section_html=copy_html,
                 copy_section_text=copy_text,
                 withheld_html=withheld_html,
+                recipient=recipient,
             )
         )
     finally:
@@ -131,6 +124,7 @@ def _build_message(attachments=None, copy_html="", copy_text="", withheld_html="
     import email
 
     _build_message.last_kwargs = sent.get("kwargs", {})
+    _build_message.last_recipients = sent.get("recipients")
     return ok, email.message_from_string(sent["raw"]), sent.get("count", 0)
 
 
@@ -185,8 +179,8 @@ def test_existing_sections_are_unchanged():
     html = message.get_payload(0).get_payload(1).get_payload(decode=True).decode("utf-8")
     assert "GitHub Top 1" in html
     assert "arXiv 精选 1" in html
-    assert "YouTube Top 1" in html
-    assert "🐙" in html and "📺" in html
+    assert "YouTube" not in html
+    assert "🐙" in html
 
 
 def test_copy_section_appears_after_the_main_sections():
@@ -195,7 +189,7 @@ def test_copy_section_appears_after_the_main_sections():
     )
     _, message, _ = _build_message(copy_html=section)
     html = message.get_payload(0).get_payload(1).get_payload(decode=True).decode("utf-8")
-    assert html.index("YouTube Top") < html.index("各平台文案")
+    assert html.index("arXiv 精选") < html.index("各平台文案")
 
 
 def test_copy_section_also_present_in_the_plain_text_part():
@@ -266,7 +260,6 @@ def test_ambiguous_data_timeout_is_not_retried(monkeypatch):
             service.send_digest_email(
                 date(2026, 8, 1),
                 _github(),
-                _youtube(),
                 arxiv_items=_arxiv(),
             )
         )
@@ -434,3 +427,21 @@ def test_copy_section_inserts_paragraph_breaks_for_one_line_body():
     draft = CopyDraft("reddit", "A hook", "First point. Second point. Final question.")
     text = render_copy_section_text({"reddit": draft}, set(), {})
     assert "First point.\n\nSecond point.\n\nFinal question." in text
+
+
+# --- 多收件人 ---------------------------------------------------------------
+
+
+def test_parse_recipients_splits_and_deduplicates():
+    from app.services.email_service import parse_recipients
+
+    assert parse_recipients("a@x.com, b@y.com;a@x.com ,") == ["a@x.com", "b@y.com"]
+    assert parse_recipients("") == []
+
+
+def test_one_message_goes_to_every_recipient():
+    """整串地址交给 sendmail 会被当成一个地址而被拒收，必须拆成列表。"""
+    _, message, count = _build_message(recipient="a@x.com,b@y.com")
+    assert count == 1
+    assert _build_message.last_recipients == ["a@x.com", "b@y.com"]
+    assert message["To"] == "a@x.com, b@y.com"

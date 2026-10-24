@@ -3,19 +3,17 @@ import { RefreshCw, Calendar } from "lucide-react";
 import Dashboard from "../components/Dashboard";
 import GitHubList from "../components/GitHubList";
 import ArxivList from "../components/ArxivList";
-import YouTubeList from "../components/YouTubeList";
 import DetailModal from "../components/DetailModal";
 import { digestApi, systemApi } from "../services/api";
 import type {
   DigestRecord,
   SystemStatus,
   GitHubDigestItem,
-  YouTubeDigestItem,
 } from "../types";
 
 // 摘要类型选项
 const DIGEST_TYPE_OPTIONS = [
-  { value: "daily", label: "每日", description: "今日热点" },
+  { value: "daily", label: "每日", description: "昨日热点" },
   { value: "weekly", label: "每周", description: "本周精选" },
   { value: "monthly", label: "每月", description: "本月热门" },
 ] as const;
@@ -27,13 +25,8 @@ function Home() {
   const [digest, setDigest] = useState<DigestRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
-  const [selectedItem, setSelectedItem] = useState<
-    GitHubDigestItem | YouTubeDigestItem | null
-  >(null);
-  const [selectedType, setSelectedType] = useState<"github" | "youtube">(
-    "github",
-  );
-  const [activeTab, setActiveTab] = useState<"github" | "arxiv" | "youtube">("github");
+  const [selectedItem, setSelectedItem] = useState<GitHubDigestItem | null>(null);
+  const [activeTab, setActiveTab] = useState<"github" | "arxiv">("github");
   const [digestType, setDigestType] = useState<DigestType>("daily");
 
   // 加载数据
@@ -85,12 +78,6 @@ function Home() {
   // 点击项目详情
   const handleGitHubClick = (item: GitHubDigestItem) => {
     setSelectedItem(item);
-    setSelectedType("github");
-  };
-
-  const handleYouTubeClick = (item: YouTubeDigestItem) => {
-    setSelectedItem(item);
-    setSelectedType("youtube");
   };
 
   return (
@@ -171,16 +158,6 @@ function Home() {
         >
           📄 arXiv {digest?.arxiv_data?.length || 0}
         </button>
-        <button
-          onClick={() => setActiveTab("youtube")}
-          className={`px-6 py-2 rounded-md font-medium transition-colors ${
-            activeTab === "youtube"
-              ? "bg-neutral-950 text-neutral-50 border border-neutral-800 rounded-full"
-              : "text-neutral-400 hover:text-white rounded-full"
-          }`}
-        >
-          📺 YouTube Top {digest?.youtube_data?.length || 0}
-        </button>
       </div>
 
       {/* 内容列表 */}
@@ -201,13 +178,8 @@ function Home() {
               items={digest?.github_data || []}
               onItemClick={handleGitHubClick}
             />
-          ) : activeTab === "arxiv" ? (
-            <ArxivList items={digest?.arxiv_data || []} />
           ) : (
-            <YouTubeList
-              items={digest?.youtube_data || []}
-              onItemClick={handleYouTubeClick}
-            />
+            <ArxivList items={digest?.arxiv_data || []} />
           )}
         </>
       )}
@@ -215,7 +187,6 @@ function Home() {
       {/* 详情弹窗 */}
       <DetailModal
         item={selectedItem}
-        type={selectedType}
         onClose={() => setSelectedItem(null)}
       />
     </div>

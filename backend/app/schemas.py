@@ -74,7 +74,7 @@ class ArxivDigestItem(BaseModel):
 
 
 # =====================
-# YouTube 相关模型
+# YouTube 相关模型（已停用：只为读取历史记录里的 youtube_data 保留，新摘要不再采集）
 # =====================
 
 class YouTubeDigestItem(BaseModel):
@@ -187,7 +187,6 @@ class StatusResponse(BaseModel):
     database_connected: bool = True
     config_valid: bool = True
     github_configured: bool = False
-    youtube_configured: bool = False
     gemini_configured: bool = False
     email_configured: bool = False
 
@@ -206,14 +205,3 @@ class TriggerResponse(BaseModel):
     task_id: Optional[str] = None
     digest_date: Optional[date] = None
 
-
-class YouTubeAnalyzeRequest(BaseModel):
-    """YouTube 单视频分析请求"""
-    video_url: Optional[str] = Field(default=None, description="YouTube 视频 URL")
-    video_id: Optional[str] = Field(default=None, description="YouTube 视频 ID")
-
-    @model_validator(mode="after")
-    def validate_input(self):
-        if not self.video_url and not self.video_id:
-            raise ValueError("video_url 和 video_id 至少提供一个")
-        return self

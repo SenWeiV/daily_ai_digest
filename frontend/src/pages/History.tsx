@@ -1,20 +1,18 @@
 import { useState, useEffect } from 'react'
-import { BookOpen, Calendar, ChevronRight, Github, Youtube, Mail, CheckCircle, XCircle } from 'lucide-react'
+import { BookOpen, Calendar, ChevronRight, Github, Mail, CheckCircle, XCircle } from 'lucide-react'
 import { digestApi } from '../services/api'
 import GitHubList from '../components/GitHubList'
-import YouTubeList from '../components/YouTubeList'
 import ArxivList from '../components/ArxivList'
 import DetailModal from '../components/DetailModal'
-import type { DigestRecordBrief, DigestRecord, GitHubDigestItem, YouTubeDigestItem } from '../types'
+import type { DigestRecordBrief, DigestRecord, GitHubDigestItem } from '../types'
 
 function History() {
   const [historyList, setHistoryList] = useState<DigestRecordBrief[]>([])
   const [selectedRecord, setSelectedRecord] = useState<DigestRecord | null>(null)
   const [loading, setLoading] = useState(true)
   const [detailLoading, setDetailLoading] = useState(false)
-  const [selectedItem, setSelectedItem] = useState<GitHubDigestItem | YouTubeDigestItem | null>(null)
-  const [selectedType, setSelectedType] = useState<'github' | 'youtube'>('github')
-  const [activeTab, setActiveTab] = useState<'github' | 'arxiv' | 'youtube'>('github')
+  const [selectedItem, setSelectedItem] = useState<GitHubDigestItem | null>(null)
+  const [activeTab, setActiveTab] = useState<'github' | 'arxiv'>('github')
 
   // 加载历史列表
   useEffect(() => {
@@ -104,10 +102,6 @@ function History() {
                     {item.arxiv_count}
                   </span>
                   <span className="flex items-center">
-                    <Youtube className="w-4 h-4 mr-1 text-red-600" />
-                    {item.youtube_count}
-                  </span>
-                  <span className="flex items-center">
                     {item.email_sent ? (
                       <CheckCircle className="w-4 h-4 text-green-500" />
                     ) : (
@@ -151,10 +145,6 @@ function History() {
                 <span className="flex items-center text-violet-600">
                   📄 arXiv {selectedRecord.arxiv_data?.length || 0} 篇
                 </span>
-                <span className="flex items-center">
-                  <Youtube className="w-4 h-4 mr-1 text-red-600" />
-                  YouTube {selectedRecord.youtube_data?.length || 0} 个视频
-                </span>
                 {selectedRecord.email_sent && (
                   <span className="flex items-center text-green-600">
                     <Mail className="w-4 h-4 mr-1" />
@@ -186,37 +176,16 @@ function History() {
               >
                 📄 arXiv
               </button>
-              <button
-                onClick={() => setActiveTab('youtube')}
-                className={`px-6 py-2 rounded-md font-medium transition-colors ${
-                  activeTab === 'youtube'
-                    ? 'bg-white text-red-600 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                📺 YouTube
-              </button>
             </div>
 
             {/* 内容列表 */}
             {activeTab === 'github' ? (
               <GitHubList
                 items={selectedRecord.github_data || []}
-                onItemClick={(item) => {
-                  setSelectedItem(item)
-                  setSelectedType('github')
-                }}
+                onItemClick={(item) => setSelectedItem(item)}
               />
-            ) : activeTab === 'arxiv' ? (
-              <ArxivList items={selectedRecord.arxiv_data || []} />
             ) : (
-              <YouTubeList
-                items={selectedRecord.youtube_data || []}
-                onItemClick={(item) => {
-                  setSelectedItem(item)
-                  setSelectedType('youtube')
-                }}
-              />
+              <ArxivList items={selectedRecord.arxiv_data || []} />
             )}
           </div>
         )}
@@ -225,7 +194,6 @@ function History() {
       {/* 详情弹窗 */}
       <DetailModal
         item={selectedItem}
-        type={selectedType}
         onClose={() => setSelectedItem(null)}
       />
     </div>

@@ -90,9 +90,6 @@ services:
       - TARGET_ITEMS=${TARGET_ITEMS:-10}
       - MAX_ITEMS=${MAX_ITEMS:-24}
 
-      # YouTube API
-      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY:-}
-      
       # 邮件服务配置（支持 Gmail / 163 / QQ 等）
       - SMTP_SERVER=${SMTP_SERVER:-smtp.163.com}
       - SMTP_PORT=${SMTP_PORT:-465}
@@ -106,8 +103,10 @@ services:
       - DIGEST_RECIPIENT=${DIGEST_RECIPIENT:-}
       
       # 定时任务配置
-      - SCHEDULE_HOUR=${SCHEDULE_HOUR:-8}
+      # 日报送达时间；提前 DIGEST_PREPARE_LEAD_MINUTES 分钟开始整理前一天的内容
+      - SCHEDULE_HOUR=${SCHEDULE_HOUR:-9}
       - SCHEDULE_MINUTE=${SCHEDULE_MINUTE:-0}
+      - DIGEST_PREPARE_LEAD_MINUTES=${DIGEST_PREPARE_LEAD_MINUTES:-30}
       - TIMEZONE=${TIMEZONE:-Asia/Shanghai}
       
       # 应用配置

@@ -7,6 +7,17 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 
+# 物理 AI 的重点子方向。这些词同时是 physical-ai 的领域词；命中时额外打上
+# world-model 标签，content_selector 据此把它当成独立主题优先覆盖。
+WORLD_MODEL_TOPIC = "world-model"
+WORLD_MODEL_TERMS: tuple[str, ...] = (
+    "world model", "world models", "world foundation model", "world simulator",
+    "video world model", "interactive world model", "generative world model",
+    "learned simulator", "latent dynamics model", "action-conditioned video",
+    "cosmos world", "genie 3", "dreamerv3", "v-jepa", "jepa",
+)
+
+
 @dataclass(frozen=True)
 class ResearchProfile:
     name: str
@@ -77,13 +88,15 @@ RESEARCH_PROFILES: tuple[ResearchProfile, ...] = (
             "dexterous manipulation", "bimanual manipulation", "legged robot",
             "locomotion", "whole-body control", "vla", "vision-language-action",
             "robot foundation model", "sim-to-real", "sim2real", "robot simulation",
-            "isaac lab", "gr00t", "world model", "lerobot", "openvla", "smolvla",
+            "isaac lab", "gr00t", "lerobot", "openvla", "smolvla",
             "genesis physics",
+            *WORLD_MODEL_TERMS,
         ),
         (
             "vla model", "robot policy", "imitation learning", "diffusion policy",
             "flow matching policy", "embodied benchmark", "robot dataset",
             "teleoperation", "action chunking", "transformer policy",
+            "video prediction", "planning", "simulation environment",
             "benchmark", "dataset", "implementation", "paper",
         ),
     ),
@@ -133,6 +146,28 @@ RESEARCH_PROFILES: tuple[ResearchProfile, ...] = (
             "implementation", "framework", "api",
         ),
     ),
+    # 决策模型（System One）：TypeSafe Jev 及各家同类模型。只输出类型化的
+    # 选择/分数/概率，不生成文本，用于分类、路由、打分、分支判断。
+    # 不收单独的 "typesafe"：type-safe 是编程里的通用词，会放进大量无关库。
+    ResearchProfile(
+        "decision-model",
+        (
+            "jev", "typesafe ai", "typesafe jev", "jev alternative", "jev-alternative",
+            "openjev", "nanojev", "jevlike", "system one model", "system one",
+            "system-one", "systemone", "system 1 model", "system-1 model",
+            "system 1 thinking", "decision model", "decision models",
+            "decision-only model", "non-generative decision", "typed decision",
+            "structured decision", "gliner2.5-decide", "pplx-decider",
+            "strands decider", "microsoft-decision", "decisions api",
+            "fast thinking", "dual-process",
+        ),
+        (
+            "classification", "classifier", "routing", "router", "structured output",
+            "probability", "probabilities", "confidence", "schema", "latency",
+            "inference", "benchmark", "evaluation", "fine-tuning", "open-weight",
+            "llm", "language model", "agent", "implementation", "api", "model",
+        ),
+    ),
 )
 
 # 领域词表禁止收录的单字宽词。每个词都覆盖 GitHub 上极大比例的仓库，
@@ -158,7 +193,10 @@ def _contains_term(text: str, term: str) -> bool:
 
 
 def matching_profiles(text: str) -> list[str]:
-    """Return profiles where both domain and content signals are present."""
+    """Return profiles where both domain and content signals are present.
+
+    物理 AI 命中且出现世界模型词时，追加 world-model 子标签（重点关注方向）。
+    """
     normalized = normalize_text(text)
     matches: list[str] = []
     for profile in RESEARCH_PROFILES:
@@ -166,6 +204,8 @@ def matching_profiles(text: str) -> list[str]:
         has_content = any(_contains_term(normalized, term) for term in profile.content_terms)
         if has_domain and has_content:
             matches.append(profile.name)
+    if "physical-ai" in matches and any(_contains_term(normalized, term) for term in WORLD_MODEL_TERMS):
+        matches.append(WORLD_MODEL_TOPIC)
     return matches
 
 

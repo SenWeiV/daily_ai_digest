@@ -603,7 +603,7 @@ def test_digest_service_returns_an_empty_bundle_when_assets_blow_up(monkeypatch)
 
     monkeypatch.setattr("app.services.digest_service.build_assets", _explode)
     bundle = asyncio.run(
-        digest_service._build_assets(_date(2026, 8, 1), [], [], [], "概览")
+        digest_service._build_assets(_date(2026, 8, 1), [], [], "概览")
     )
     assert bundle.attachments == []
     assert bundle.copy_section_html == ""
@@ -627,5 +627,5 @@ def test_digest_service_passes_the_bundle_through_to_the_email(monkeypatch):
 
     monkeypatch.setattr("app.services.digest_service.build_assets", _bundle)
     monkeypatch.setattr("app.services.digest_service.cleanup_old_renders", lambda *a, **k: [])
-    out = asyncio.run(digest_service._build_assets(_date(2026, 8, 1), [], [], [], None))
+    out = asyncio.run(digest_service._build_assets(_date(2026, 8, 1), [], [], None))
     assert out is bundle

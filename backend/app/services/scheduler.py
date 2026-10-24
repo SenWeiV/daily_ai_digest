@@ -3,9 +3,10 @@
 """
 
 import logging
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timedelta
+from typing import Optional, Tuple
 import asyncio
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -15,6 +16,30 @@ from app.config import settings
 from app.services.digest_service import digest_service
 
 logger = logging.getLogger(__name__)
+
+
+def daily_prepare_time() -> Tuple[int, int]:
+    """日报开始整理的时刻 = 送达时刻 - 提前量（跨午夜时按一天 1440 分钟回绕）。"""
+    total = (settings.schedule_hour * 60 + settings.schedule_minute
+             - settings.digest_prepare_lead_minutes) % (24 * 60)
+    return divmod(total, 60)
+
+
+def daily_send_at(now: Optional[datetime] = None) -> datetime:
+    """本次日报的送达时刻：离"现在"最近的那个 SCHEDULE_HOUR:SCHEDULE_MINUTE。
+
+    取最近的一次而不是"下一次"：任务因 misfire 晚于送达时刻才跑时，
+    "下一次"会是明天，邮件就被扣一整天；最近的一次已过，摘要整理完立即发出。
+    """
+    now = now or datetime.now(ZoneInfo(settings.timezone))
+    send_at = now.replace(
+        hour=settings.schedule_hour, minute=settings.schedule_minute, second=0, microsecond=0
+    )
+    if send_at - now > timedelta(hours=12):
+        send_at -= timedelta(days=1)
+    elif now - send_at > timedelta(hours=12):
+        send_at += timedelta(days=1)
+    return send_at
 
 
 class SchedulerService:
@@ -43,9 +68,11 @@ class SchedulerService:
         logger.info("=" * 50)
         
         try:
-            success, message, record = await digest_service.generate_daily_digest(
+            success, message, record = await digest_service.generate_digest(
+                "daily",
                 send_email=True,
-                force=False
+                force=False,
+                send_at=daily_send_at(),
             )
             
             if success:
@@ -119,12 +146,13 @@ class SchedulerService:
                 EVENT_JOB_EXECUTED | EVENT_JOB_ERROR
             )
             
-            # 1. 每日定时任务 - 晚上8点 (20:00)
+            # 1. 每日定时任务 - 提前整理前一天的内容，SCHEDULE_HOUR:SCHEDULE_MINUTE 准点送达
+            prepare_hour, prepare_minute = daily_prepare_time()
             self.scheduler.add_job(
                 self._execute_daily_digest,
                 trigger=CronTrigger(
-                    hour=20,
-                    minute=0,
+                    hour=prepare_hour,
+                    minute=prepare_minute,
                     timezone=settings.timezone
                 ),
                 id=self.job_ids["daily"],
@@ -165,7 +193,10 @@ class SchedulerService:
             self.is_started = True
             
             logger.info(f"调度器启动成功")
-            logger.info(f"每日执行时间: 20:00 ({settings.timezone})")
+            logger.info(
+                f"每日执行时间: {prepare_hour:02d}:{prepare_minute:02d} 开始整理前一天内容，"
+                f"{settings.schedule_hour:02d}:{settings.schedule_minute:02d} 送达 ({settings.timezone})"
+            )
             logger.info(f"每周执行时间: 周日 20:30 ({settings.timezone})")
             logger.info(f"每月执行时间: 最后一天 21:00 ({settings.timezone})")
             
@@ -196,7 +227,10 @@ class SchedulerService:
             return None
             
         job = self.scheduler.get_job(job_id)
-        if job:
+        if job and job.next_run_time:
+            # 日报任务提前开始整理，对外展示的是送达时刻
+            if job_type == "daily":
+                return job.next_run_time + timedelta(minutes=settings.digest_prepare_lead_minutes)
             return job.next_run_time
         return None
     
@@ -265,7 +299,7 @@ class SchedulerService:
     
     def reschedule(self, hour: int, minute: int):
         """
-        重新设置执行时间
+        重新设置日报送达时间（开始整理的时刻随之提前）
         
         Args:
             hour: 小时 (0-23)
@@ -276,11 +310,14 @@ class SchedulerService:
             return
         
         try:
+            settings.schedule_hour = hour
+            settings.schedule_minute = minute
+            prepare_hour, prepare_minute = daily_prepare_time()
             self.scheduler.reschedule_job(
-                self.job_id,
+                self.job_ids["daily"],
                 trigger=CronTrigger(
-                    hour=hour,
-                    minute=minute,
+                    hour=prepare_hour,
+                    minute=prepare_minute,
                     timezone=settings.timezone
                 )
             )

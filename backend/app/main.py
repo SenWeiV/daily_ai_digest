@@ -85,11 +85,6 @@ def _check_config():
     else:
         logger.info("✅ GitHub Token 已配置")
     
-    if not settings.youtube_api_key:
-        issues.append("⚠️  YouTube API Key 未配置")
-    else:
-        logger.info("✅ YouTube API Key 已配置")
-    
     # 邮件服务检查（支持新配置和旧配置）
     email_configured = (settings.email_sender and settings.email_password) or (settings.gmail_sender and settings.gmail_app_password)
     if not email_configured:
@@ -109,7 +104,7 @@ def _check_config():
 # 创建 FastAPI 应用
 app = FastAPI(
     title="Daily AI Digest",
-    description="每日AI情报摘要系统 - 自动从GitHub和YouTube获取AI领域热点内容",
+    description="每日AI情报摘要系统 - 自动从 GitHub 和 arXiv 获取AI领域热点内容",
     version="1.0.0",
     lifespan=lifespan
 )
